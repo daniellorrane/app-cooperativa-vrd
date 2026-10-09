@@ -383,6 +383,39 @@
     });
   }
 
+  // Pedido de permissão para notificações. Só sai quando o aparelho responde (permitir ou negar).
+  function telaPermissoes(perfil) {
+    mostrarBotaoSair(true);
+    app.innerHTML = `
+      <section class="cartao">
+        <h1>Ative as notificações</h1>
+        <p>Para acompanhar o seu cadastro e os seus atendimentos, precisamos da sua permissão para enviar notificações neste aparelho.</p>
+        <p>Você receberá avisos sobre aprovação do cadastro, atualizações dos atendimentos e comunicados da cooperativa.</p>
+        <p class="ajuda">Os avisos não mostram detalhes na tela de bloqueio. O conteúdo fica somente dentro do sistema.</p>
+        <form id="form-permissao" novalidate>
+          <p class="erro" role="alert" hidden></p>
+          <button type="submit" class="btn-primario">Permitir notificações</button>
+        </form>
+      </section>`;
+
+    const form = document.getElementById("form-permissao");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      mostrarErro(form, "");
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      try {
+        await window.Push.ativar();
+      } catch (erro) {
+        // Permissão negada no navegador: segue para o sistema. Pode ser ativada depois em Meus dados.
+        if (Notification.permission === "denied") return rotear();
+        btn.disabled = false;
+        return mostrarErro(form, "Não foi possível ativar as notificações: " + erro.message);
+      }
+      rotear();
+    });
+  }
+
   // Página pública de um documento (acessível sem login, pelos links do cadastro).
   async function telaDocumento(tipo) {
     app.innerHTML = '<section class="cartao largo"><p class="ajuda">Carregando...</p></section>';
@@ -658,6 +691,9 @@
         if (perfil[DOCS[tipo].campoVersao] !== doc.versao) pendentes.push({ tipo, doc });
       }
       if (pendentes.length) return telaAceiteDocumentos(perfil, pendentes);
+
+      // Permissão de notificações: pedida logo após o aceite, antes de entrar no sistema.
+      if (await window.Push.precisaPerguntar()) return telaPermissoes(perfil);
 
       if (perfil.status === "pendente") return telaPendente();
       return telaPainel(perfil, hash);

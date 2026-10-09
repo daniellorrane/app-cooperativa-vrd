@@ -41,6 +41,7 @@
     { grupo: "Principal", rota: "conversas", titulo: "Atendimentos", icone: "chat" },
     { grupo: "Principal", rota: "nova", titulo: "Nova solicitação", icone: "plus" },
     { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
+    { grupo: "Principal", rota: "avisos", titulo: "Enviar aviso", icone: "send", staff: true },
     { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
     { grupo: "Administração", rota: "admin/cadastros", titulo: "Cadastros", icone: "check", admin: true },
     { grupo: "Administração", rota: "admin/areas", titulo: "Áreas e funcionários", icone: "map", admin: true },
@@ -56,6 +57,7 @@
     check: "M5 12l5 5 9-10",
     map: "M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z",
     doc: "M7 3h7l5 5v13H7z",
+    send: "M4 12l16-8-6 16-3-7z",
   };
   const icone = (nome) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONES[nome]}"/></svg>`;
 
@@ -84,11 +86,12 @@
     sairDaConversa();
 
     const admin = perfil.tipo_acesso === "administrador";
+    const equipe = admin || perfil.tipo_acesso === "funcionario";
     const caminho = (hash || "inicio").split("/");
     const chave = caminho[0] === "admin" ? caminho.join("/") : caminho[0];
     const ativo = caminho[0] === "conversa" ? "conversas" : chave;
 
-    const itens = MENU.filter((i) => !i.admin || admin);
+    const itens = MENU.filter((i) => (!i.admin || admin) && (!i.staff || equipe));
     const grupos = [...new Set(itens.map((i) => i.grupo))];
 
     raiz.className = "conteudo painel";
@@ -122,6 +125,7 @@
       conversa: () => telaConversa(caminho[1]),
       nova: telaNova,
       notificacoes: telaNotificacoes,
+      avisos: () => (equipe ? telaAvisos() : telaInicio()),
       "meus-dados": () => extras["meus-dados"]?.(alvo()),
       "admin/cadastros": () => (admin ? extras["admin/cadastros"]?.(alvo()) : telaInicio()),
       "admin/areas": () => (admin ? telaAreas() : telaInicio()),
@@ -158,7 +162,7 @@
     alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
     const { data, error } = await sb()
       .from("notificacoes")
-      .select("id, titulo, lida, conversa_id, criado_em")
+      .select("id, titulo, corpo, tipo, lida, conversa_id, criado_em")
       .order("criado_em", { ascending: false })
       .limit(50);
     if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
@@ -170,8 +174,12 @@
       </div>
       <div class="lista">
         ${data.length ? data.map((n) => `
-          <article class="item clicavel ${n.lida ? "" : "nao-lida"}" data-id="${n.id}" data-conversa="${n.conversa_id ?? ""}">
-            <strong>${esc(n.titulo)}</strong>
+          <article class="item ${n.conversa_id ? "clicavel" : ""} ${n.lida ? "" : "nao-lida"}" data-id="${n.id}" data-conversa="${n.conversa_id ?? ""}">
+            <div>
+              <strong>${esc(n.titulo)}</strong>
+              ${n.tipo === "manual" ? '<span class="etiqueta">Aviso da cooperativa</span>' : ""}
+            </div>
+            ${n.corpo ? `<p>${esc(n.corpo)}</p>` : ""}
             <p class="ajuda">${dataCurta(n.criado_em)}${n.lida ? "" : " · nova"}</p>
           </article>`).join("") : '<p class="ajuda">Nenhuma notificação.</p>'}
       </div>`;
@@ -436,6 +444,94 @@
       }
       form.texto.value = "";
       adicionar(nova);
+    });
+  }
+
+  // ---------- Avisos manuais (funcionários e administrador) ----------
+
+  const DESTINATARIOS = [
+    ["todos", "Todos os usuários aprovados"],
+    ["cooperado", "Cooperados"],
+    ["cliente", "Clientes"],
+    ["fornecedor", "Fornecedores"],
+    ["prestador_servico", "Prestadores de serviço"],
+    ["funcionario", "Funcionários"],
+  ];
+  const nomeDestino = (valor) => (DESTINATARIOS.find(([v]) => v === valor) || [null, valor])[1];
+
+  async function telaAvisos() {
+    alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
+    const { data: enviados, error } = await sb()
+      .from("comunicados")
+      .select("id, titulo, destinatarios, total, criado_em")
+      .order("criado_em", { ascending: false })
+      .limit(30);
+    if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
+
+    alvo().innerHTML = `
+      <h1>Enviar aviso</h1>
+      <p class="ajuda">A pessoa recebe um alerta genérico no aparelho e o texto completo dentro do sistema. O texto fica registrado com o seu nome, então evite dados pessoais de terceiros.</p>
+      <section class="cartao">
+        <form id="form-aviso" novalidate>
+          <label>Para quem
+            <select name="destinatarios" required>
+              ${DESTINATARIOS.map(([v, r]) => `<option value="${v}">${esc(r)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Título <small>(aparece na lista de notificações)</small>
+            <input type="text" name="titulo" maxlength="80" required minlength="3" />
+          </label>
+          <label>Mensagem
+            <textarea name="corpo" rows="5" maxlength="1000" required></textarea>
+          </label>
+          <p class="erro" role="alert" hidden></p>
+          <p class="sucesso" role="status" hidden></p>
+          <button type="submit" class="btn-primario">Enviar aviso</button>
+        </form>
+      </section>
+      <h2>Avisos enviados</h2>
+      <div class="lista">
+        ${enviados.length ? enviados.map((c) => `
+          <article class="item">
+            <strong>${esc(c.titulo)}</strong>
+            <p class="ajuda">${esc(nomeDestino(c.destinatarios))} · ${c.total} destinatário(s) · ${dataCurta(c.criado_em)}</p>
+          </article>`).join("") : '<p class="ajuda">Nenhum aviso enviado ainda.</p>'}
+      </div>`;
+
+    const form = document.getElementById("form-aviso");
+    const erro = form.querySelector(".erro");
+    const sucesso = form.querySelector(".sucesso");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      erro.hidden = true;
+      sucesso.hidden = true;
+      const titulo = form.titulo.value.trim();
+      const corpo = form.corpo.value.trim();
+      const destinatarios = form.destinatarios.value;
+      if (titulo.length < 3 || corpo.length < 3) {
+        erro.textContent = "Preencha o título e a mensagem do aviso.";
+        erro.hidden = false;
+        return;
+      }
+      if (!confirm(`Enviar este aviso para: ${nomeDestino(destinatarios)}?`)) return;
+
+      const botao = form.querySelector("button");
+      botao.disabled = true;
+      const { data: quantidade, error: erroEnvio } = await sb().rpc("enviar_comunicado", {
+        p_titulo: titulo,
+        p_corpo: corpo,
+        p_destinatarios: destinatarios,
+      });
+      if (erroEnvio) {
+        botao.disabled = false;
+        erro.textContent = "Não foi possível enviar: " + erroEnvio.message;
+        erro.hidden = false;
+        return;
+      }
+      await telaAvisos();
+      const aviso = alvo().querySelector(".sucesso");
+      aviso.textContent = `Aviso enviado para ${quantidade} pessoa(s).`;
+      aviso.hidden = false;
     });
   }
 

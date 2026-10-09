@@ -69,5 +69,13 @@
     await inscricao.unsubscribe();
   }
 
-  window.Push = { estado, ativar, desativar };
+  // Verdadeiro quando o aparelho ainda não respondeu sobre notificações (permissão não decidida e sem inscrição).
+  async function precisaPerguntar() {
+    if (!CHAVE_PUBLICA || !suportado()) return false;
+    if (Notification.permission !== "default") return false;
+    const registro = await navigator.serviceWorker.ready;
+    return !(await registro.pushManager.getSubscription());
+  }
+
+  window.Push = { estado, ativar, desativar, precisaPerguntar };
 })();

@@ -43,9 +43,10 @@ Deno.serve(async (req) => {
     .select("id, endpoint, p256dh, auth")
     .eq("usuario_id", notificacao.usuario_id);
 
+  // Texto sempre genérico: nem o título nem o conteúdo do aviso saem do sistema (LGPD).
   const payload = JSON.stringify({
     titulo: "Cooperativa Vale do Rio Doce",
-    corpo: notificacao.titulo,
+    corpo: "Você tem uma nova atualização no sistema.",
     url: notificacao.conversa_id ? `/#conversa/${notificacao.conversa_id}` : "/#notificacoes",
   });
 
