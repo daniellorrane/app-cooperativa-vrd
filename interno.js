@@ -170,17 +170,6 @@
   }
 
   async function telaNova() {
-    if (!perfilAtual.termo_aceito_em) {
-      alvo().innerHTML = `
-        <section class="cartao">
-          <h2>Antes de começar</h2>
-          <p class="ajuda">Para abrir uma conversa, leia e aceite a política de privacidade.</p>
-          <div class="acoes"><button id="ir-privacidade" class="btn-primario">Ver política de privacidade</button></div>
-        </section>`;
-      document.getElementById("ir-privacidade").addEventListener("click", telaPrivacidade);
-      return;
-    }
-
     const { data: areas } = await sb().from("areas").select("id, nome").eq("ativa", true).order("nome");
     alvo().innerHTML = `
       <section class="cartao">
@@ -298,8 +287,12 @@
       if (exibidas.has(msg.id)) return;
       exibidas.add(msg.id);
       const eu = msg.autor_id === uid;
-      const cooperado = msg.autor_id === conversa.solicitante_id;
-      const autor = eu ? "Você" : cooperado ? "Cooperado" : "Equipe " + nomeArea;
+      const cooperado = msg.autor_id !== null && msg.autor_id === conversa.solicitante_id;
+      // Autor nulo: conta excluída com histórico mantido de forma anônima.
+      const autor = msg.autor_id === null ? "Usuário removido"
+        : eu ? "Você"
+        : cooperado ? "Cooperado"
+        : "Equipe " + nomeArea;
       const item = document.createElement("div");
       item.className = "msg " + (eu ? "eu" : "outro");
       item.innerHTML = `<small>${esc(autor)} · ${dataCurta(msg.criado_em)}</small>${esc(msg.texto).replace(/\n/g, "<br>")}`;
@@ -346,38 +339,32 @@
 
   // ---------- Privacidade (LGPD) ----------
 
-  function telaPrivacidade() {
-    const aceito = !!perfilAtual.termo_aceito_em;
+  async function telaPrivacidade() {
+    alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
+    const { data: termo } = await sb()
+      .from("termos_uso")
+      .select("versao, texto")
+      .order("publicado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     alvo().innerHTML = `
       <section class="cartao texto-legal">
         <h2>Política de privacidade</h2>
         <p><strong>Dados tratados:</strong> nome, CPF, e-mail, celular e o conteúdo das conversas e solicitações que você abrir.</p>
         <p><strong>Finalidade:</strong> atendimento ao cooperado e às pessoas que se relacionam com a cooperativa, incluindo solicitações de documentos e serviços.</p>
-        <p><strong>Quem tem acesso:</strong> você, o administrador e somente os funcionários habilitados na área para a qual a solicitação foi enviada. Nenhum outro perfil consegue ver essas conversas.</p>
+        <p><strong>Quem tem acesso:</strong> você, o administrador e somente os funcionários vinculados à área para a qual a solicitação foi enviada. Funcionários de outras áreas não veem essas conversas.</p>
         <p><strong>Notificações:</strong> os avisos não trazem o assunto nem o conteúdo das mensagens.</p>
         <p><strong>Retenção:</strong> as conversas são mantidas pelo prazo necessário ao atendimento e ao cumprimento de obrigações legais, conforme regras definidas pela cooperativa.</p>
-        <p><strong>Seus direitos (LGPD):</strong> confirmar o tratamento, acessar, corrigir, solicitar a eliminação dos seus dados, obter informações sobre compartilhamento e revogar seu consentimento. Para isso, procure a cooperativa pelos canais oficiais de atendimento.</p>
-        ${aceito
-          ? `<p class="sucesso">Você aceitou esta política em ${dataCurta(perfilAtual.termo_aceito_em)}.</p>`
-          : `<div class="acoes"><button id="aceitar-termo" class="btn-primario">Li e aceito a política de privacidade</button></div>
-             <p class="erro" hidden></p>`}
+        <p><strong>Seus direitos (LGPD):</strong> confirmar o tratamento, acessar, corrigir, solicitar a eliminação dos seus dados, obter informações sobre compartilhamento e revogar seu consentimento. Você pode corrigir seus dados em <a href="#meus-dados">Meus dados</a> e excluir sua conta na mesma tela.</p>
+      </section>
+      <section class="cartao texto-legal">
+        <h2>Termos e Condições de Uso</h2>
+        ${termo
+          ? `<p class="ajuda">Versão ${esc(termo.versao)}. Você aceitou esta versão ao entrar no sistema.</p>
+             <div class="texto-puro">${esc(termo.texto)}</div>`
+          : '<p class="erro">Não foi possível carregar os termos agora.</p>'}
       </section>`;
-
-    const botao = document.getElementById("aceitar-termo");
-    if (botao) {
-      botao.addEventListener("click", async () => {
-        const agora = new Date().toISOString();
-        const { error } = await sb().from("usuarios").update({ termo_aceito_em: agora }).eq("id", uid);
-        if (error) {
-          const p = alvo().querySelector(".erro");
-          p.textContent = "Não foi possível registrar o aceite: " + error.message;
-          p.hidden = false;
-          return;
-        }
-        perfilAtual.termo_aceito_em = agora;
-        telaPrivacidade();
-      });
-    }
   }
 
   // ---------- Áreas e funcionários (administrador) ----------

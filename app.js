@@ -103,6 +103,18 @@
     return data;
   }
 
+  // Termo de uso vigente (versão publicada mais recente).
+  async function carregarTermoAtual() {
+    const { data, error } = await sb
+      .from("termos_uso")
+      .select("versao, texto")
+      .order("publicado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data;
+  }
+
   // ---------- Telas ----------
 
   function telaLogin() {
@@ -259,6 +271,112 @@
       sucesso.textContent = "Dados atualizados.";
       sucesso.hidden = false;
     });
+
+    const formExcluir = document.getElementById("form-excluir-conta");
+    formExcluir.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      mostrarErro(formExcluir, "");
+      const modo = formExcluir.modo.value;
+      const senha = formExcluir.senha.value;
+      if (formExcluir.confirmacao.value.trim() !== "EXCLUIR") {
+        return mostrarErro(formExcluir, "Digite EXCLUIR no campo de confirmação.");
+      }
+      if (!senha) return mostrarErro(formExcluir, "Informe a sua senha atual.");
+
+      const aviso = modo === "apagar"
+        ? "Apagar sua conta e todo o histórico? Esta ação não pode ser desfeita."
+        : "Excluir sua conta e manter o histórico de forma anônima? Esta ação não pode ser desfeita.";
+      if (!confirm(aviso)) return;
+
+      const btn = formExcluir.querySelector("button");
+      btn.disabled = true;
+      // Confirma a senha antes de excluir, para proteger a conta caso alguém use uma sessão aberta.
+      const { error: erroSenha } = await sb.auth.signInWithPassword({ email: perfil.email, password: senha });
+      if (erroSenha) {
+        btn.disabled = false;
+        return mostrarErro(formExcluir, "A senha atual está incorreta.");
+      }
+      const { error } = await sb.rpc("excluir_minha_conta", { p_modo: modo });
+      if (error) {
+        btn.disabled = false;
+        return mostrarErro(formExcluir, "Não foi possível excluir a conta: " + error.message);
+      }
+      await sb.auth.signOut({ scope: "local" });
+      location.hash = "";
+      alert("Sua conta foi excluída.");
+      rotear();
+    });
+  }
+
+  // Termos e Condições: texto em blocos. Títulos numerados viram subtítulos.
+  function textoDosTermos(texto, titulo = "h1") {
+    return texto.split(/\n\s*\n/).map((bloco, i) => {
+      const linhas = bloco.trim().split("\n").map((l) => escapar(l));
+      if (i === 0) {
+        return `<${titulo}>${linhas[0]}</${titulo}>` +
+          (linhas.length > 1 ? `<p class="ajuda">${linhas.slice(1).join("<br>")}</p>` : "");
+      }
+      if (/^\d+\.\s/.test(bloco.trim())) {
+        return `<h2>${linhas[0]}</h2>` + (linhas.length > 1 ? `<p>${linhas.slice(1).join("<br>")}</p>` : "");
+      }
+      return `<p>${linhas.join("<br>")}</p>`;
+    }).join("");
+  }
+
+  // Aceite obrigatório da versão vigente dos termos (cadastro antigo ou nova versão publicada).
+  function telaAceiteTermos(perfil, termo) {
+    mostrarBotaoSair(true);
+    app.innerHTML = `
+      <section class="cartao largo texto-legal">
+        ${textoDosTermos(termo.texto, "h2")}
+        <form id="form-aceite-termo" novalidate>
+          <label class="opcao">
+            <input type="checkbox" name="aceite" />
+            <span>Li e aceito os Termos e Condições de Uso</span>
+          </label>
+          <p class="erro" role="alert" hidden></p>
+          <button type="submit" class="btn-primario">Continuar</button>
+        </form>
+      </section>`;
+
+    const form = document.getElementById("form-aceite-termo");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      mostrarErro(form, "");
+      if (!form.aceite.checked) return mostrarErro(form, "Marque a opção para aceitar os termos.");
+
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      const { error } = await sb
+        .from("usuarios")
+        .update({ termo_versao: termo.versao, termo_aceito_em: new Date().toISOString() })
+        .eq("id", perfil.id);
+      if (error) {
+        btn.disabled = false;
+        return mostrarErro(form, "Não foi possível registrar o aceite: " + error.message);
+      }
+      rotear();
+    });
+  }
+
+  // Página pública dos termos (acessível sem login, pelo link do cadastro).
+  async function telaTermos() {
+    app.innerHTML = '<section class="cartao largo"><p class="ajuda">Carregando...</p></section>';
+    const termo = await carregarTermoAtual();
+    if (!termo) {
+      app.innerHTML = '<section class="cartao"><p class="erro">Não foi possível carregar os termos agora. Tente novamente em instantes.</p></section>';
+      return;
+    }
+    app.innerHTML = `
+      <section class="cartao largo texto-legal">
+        ${textoDosTermos(termo.texto)}
+        <p class="rodape-form"><a href="#" id="voltar-termos">Voltar</a></p>
+      </section>`;
+    document.getElementById("voltar-termos").addEventListener("click", (e) => {
+      e.preventDefault();
+      location.hash = "";
+      rotear();
+    });
   }
 
   async function telaCadastro() {
@@ -281,6 +399,13 @@
       form.cpf.value = formatarCpf(form.cpf.value);
     });
 
+    const termo = await carregarTermoAtual();
+    if (!termo) {
+      mostrarErro(form, "Não foi possível carregar os termos de uso. Tente novamente em instantes.");
+      form.querySelector("button[type=submit]").disabled = true;
+      return;
+    }
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       mostrarErro(form, "");
@@ -298,6 +423,7 @@
       if (!cpfValido(dados.cpf)) return mostrarErro(form, "CPF inválido. Confira os números.");
       if (dados.senha.length < 8) return mostrarErro(form, "A senha precisa ter pelo menos 8 caracteres.");
       if (!telefoneValido(dados.telefone)) return mostrarErro(form, "Celular inválido. Use o formato +55(33)999058391.");
+      if (!form.aceite.checked) return mostrarErro(form, "Leia e aceite os Termos e Condições de Uso para continuar.");
 
       const btn = form.querySelector("button");
       btn.disabled = true;
@@ -323,6 +449,8 @@
           email: dados.email,
           telefone: dados.telefone,
           tipo_acesso: dados.tipo,
+          termo_versao: termo.versao,
+          termo_aceito_em: new Date().toISOString(),
         });
         if (erroPerfil) {
           if (erroPerfil.code === "23505") {
@@ -453,6 +581,7 @@
     try {
       if (modoRecuperacao) return telaRedefinir();
       const hash = location.hash.replace("#", "");
+      if (hash === "termos") return telaTermos();
       const { data: { session } } = await sb.auth.getSession();
 
       if (!session) {
@@ -463,8 +592,14 @@
 
       const perfil = await buscarPerfil();
       if (!perfil) return telaCadastro();
-      if (perfil.status === "pendente") return telaPendente();
       if (perfil.status === "recusado" || perfil.status === "bloqueado") return telaRecusado(perfil);
+
+      // Termos valem para todo o sistema: quem não aceitou a versão vigente aceita antes de seguir.
+      const termo = await carregarTermoAtual();
+      if (!termo) throw new Error("Não foi possível carregar os termos de uso. Atualize a página.");
+      if (perfil.termo_versao !== termo.versao) return telaAceiteTermos(perfil, termo);
+
+      if (perfil.status === "pendente") return telaPendente();
       if (hash === "meus-dados") return telaMeusDados(perfil);
       return telaPainel(perfil);
     } catch (err) {

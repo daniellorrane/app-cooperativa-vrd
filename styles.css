@@ -258,6 +258,7 @@ textarea, select {
 }
 .seletor-status { min-height: 46px; }
 .texto-legal p { line-height: 1.6; }
+.texto-puro { white-space: pre-line; line-height: 1.6; font-size: 15px; }
 .texto-legal h2 { margin-top: 0; }
 form input:disabled { background: var(--fundo); color: var(--cinza); }
 .motivo { background: var(--verde-claro); padding: 12px; border-radius: 10px; }
