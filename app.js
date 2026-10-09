@@ -365,16 +365,14 @@
         return mostrarErro(form, "Marque o aceite de todos os documentos para continuar.");
       }
 
-      const agora = new Date().toISOString();
-      const atualizacao = {};
-      pendentes.forEach(({ tipo, doc }) => {
-        atualizacao[DOCS[tipo].campoVersao] = doc.versao;
-        atualizacao[DOCS[tipo].campoAceite] = agora;
-      });
-
+      const versaoDe = (tipo) => pendentes.find((p) => p.tipo === tipo)?.doc.versao ?? null;
       const btn = form.querySelector("button");
       btn.disabled = true;
-      const { error } = await sb.from("usuarios").update(atualizacao).eq("id", perfil.id);
+      // O banco confere se a versão é a vigente e grava a data do aceite.
+      const { error } = await sb.rpc("aceitar_documentos", {
+        p_termo_versao: versaoDe("termos"),
+        p_privacidade_versao: versaoDe("privacidade"),
+      });
       if (error) {
         btn.disabled = false;
         return mostrarErro(form, "Não foi possível registrar o aceite: " + error.message);
