@@ -42,6 +42,7 @@
   const MENU = [
     { grupo: "Principal", rota: "inicio", titulo: "Início", icone: "home" },
     { grupo: "Principal", rota: "conversas", titulo: "Atendimentos", icone: "chat" },
+    { grupo: "Principal", rota: "agenda", titulo: "Agenda", icone: "calendar" },
     { grupo: "Principal", rota: "nova", titulo: "Nova solicitação", icone: "plus" },
     { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
     { grupo: "Principal", rota: "avisos", titulo: "Enviar aviso", icone: "send", staff: true },
@@ -67,6 +68,7 @@
     send: "M4 12l16-8-6 16-3-7z",
     shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z",
     flag: "M5 21V4h12l-2 4 2 4H5",
+    calendar: "M4 5h16v15H4zM4 10h16M8 3v4M16 3v4",
   };
   const icone = (nome) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONES[nome]}"/></svg>`;
 
@@ -133,6 +135,7 @@
       inicio: telaInicio,
       conversas: telaConversas,
       conversa: () => window.Atendimento.abrir(alvo(), perfil, caminho[1]),
+      agenda: () => window.Agenda.tela(alvo(), perfil, caminho[1]),
       respostas: () => (equipe ? window.Atendimento.respostasRapidas(alvo(), perfil) : telaInicio()),
       nova: telaNova,
       notificacoes: telaNotificacoes,
