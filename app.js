@@ -5,6 +5,7 @@
   // Link inválido ou expirado: o Supabase devolve o erro no endereço.
   const codigoErroLink = new URLSearchParams(location.hash.slice(1)).get("error_code");
   const sb = createClient(window.APP_CONFIG.SUPABASE_URL, window.APP_CONFIG.SUPABASE_KEY);
+  window.sb = sb; // usado pelo módulo de comunicação interna
 
   const app = document.getElementById("app");
   const btnSair = document.getElementById("btn-sair");
@@ -358,6 +359,7 @@
     document.getElementById("btn-meus-dados").addEventListener("click", () => {
       location.hash = "meus-dados";
     });
+    window.Interno.montar(perfil, document.getElementById("area-interna"));
 
     if (perfil.tipo_acesso === "administrador") {
       document.getElementById("area-admin").hidden = false;
