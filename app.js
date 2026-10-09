@@ -2,6 +2,8 @@
   const { createClient } = supabase;
   // Guarda se o endereço veio de um link de recuperação antes do Supabase limpá-lo.
   let modoRecuperacao = location.hash.includes("type=recovery");
+  // Link inválido ou expirado: o Supabase devolve o erro no endereço.
+  const codigoErroLink = new URLSearchParams(location.hash.slice(1)).get("error_code");
   const sb = createClient(window.APP_CONFIG.SUPABASE_URL, window.APP_CONFIG.SUPABASE_KEY);
 
   const app = document.getElementById("app");
@@ -106,6 +108,13 @@
     mostrarBotaoSair(false);
     renderizar("tpl-login");
     const form = document.getElementById("form-login");
+    if (codigoErroLink) {
+      const mensagem = codigoErroLink === "otp_expired"
+        ? "Este link expirou ou já foi usado. Clique em \"Esqueci minha senha\" para receber um novo link e abra-o logo em seguida."
+        : "Não foi possível validar este link. Peça um novo link de recuperação.";
+      mostrarErro(form, mensagem);
+      history.replaceState(null, "", location.pathname);
+    }
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       mostrarErro(form, "");
