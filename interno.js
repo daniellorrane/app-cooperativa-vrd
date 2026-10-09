@@ -14,7 +14,7 @@
     cancelada: "Cancelada",
   };
   const TIPOS = {
-    conversa: "Conversa",
+    conversa: "Atendimento",
     documento: "Solicitação de documento",
     servico: "Solicitação de serviço",
   };
@@ -38,7 +38,7 @@
   // Menu do painel. "rota" é o trecho após o # do endereço.
   const MENU = [
     { grupo: "Principal", rota: "inicio", titulo: "Início", icone: "home" },
-    { grupo: "Principal", rota: "conversas", titulo: "Conversas", icone: "chat" },
+    { grupo: "Principal", rota: "conversas", titulo: "Atendimentos", icone: "chat" },
     { grupo: "Principal", rota: "nova", titulo: "Nova solicitação", icone: "plus" },
     { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
     { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
@@ -234,7 +234,7 @@
     let filtroAtivo = "todas";
 
     alvo().innerHTML = `
-      <h1>Conversas</h1>
+      <h1>Atendimentos</h1>
       <p class="ajuda">Solicitações enviadas por você e, para funcionários, as da sua área.</p>
       <div class="filtros">
         ${filtros.map(([valor, rotulo]) => `<button class="chip ${valor === filtroAtivo ? "ativo" : ""}" data-filtro="${valor}">${rotulo}</button>`).join("")}
@@ -244,7 +244,7 @@
     const lista = document.getElementById("lista-conversas");
     function desenhar() {
       if (!data.length) {
-        lista.innerHTML = '<p class="ajuda">Nenhuma conversa ainda. Use "Nova solicitação" para começar.</p>';
+        lista.innerHTML = '<p class="ajuda">Nenhum atendimento ainda. Use "Nova solicitação" para começar.</p>';
         return;
       }
       const visiveis = data.filter((c) => filtroAtivo === "todas" || c.status === filtroAtivo);
@@ -286,7 +286,7 @@
           </label>
           <label>Tipo
             <select name="tipo" required>
-              <option value="conversa">Conversa</option>
+              <option value="conversa">Atendimento</option>
               <option value="documento">Solicitação de documento</option>
               <option value="servico">Solicitação de serviço</option>
             </select>
@@ -354,7 +354,7 @@
 
     alvo().innerHTML = `
       <section class="cartao">
-        <a href="#conversas" class="btn-ghost">Voltar às conversas</a>
+        <a href="#conversas" class="btn-ghost">Voltar aos atendimentos</a>
         <h1 class="titulo-conversa">${esc(conversa.assunto)}</h1>
         <p class="ajuda">${esc(TIPOS[conversa.tipo])} · ${esc(nomeArea)}</p>
         ${souSolicitante ? "" : `

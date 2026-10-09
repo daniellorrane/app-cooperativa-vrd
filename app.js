@@ -503,7 +503,7 @@
   function telaCadastros(destino, admin) {
     destino.innerHTML = `
       <h1>Cadastros</h1>
-      <p class="ajuda">Confira os dados antes de aprovar. Inativar suspende o acesso sem apagar nada. Excluir remove o cadastro, as conversas e as mensagens da pessoa.</p>
+      <p class="ajuda">Confira os dados antes de aprovar. Inativar suspende o acesso sem apagar nada. Excluir remove o cadastro, os atendimentos e as mensagens da pessoa.</p>
       <div class="filtros">
         <button class="chip ativo" data-filtro="pendente">Pendentes</button>
         <button class="chip" data-filtro="aprovado">Aprovados</button>
@@ -568,7 +568,7 @@
         const nome = card.querySelector("strong").textContent;
 
         if (acao === "excluir") {
-          const aviso = `Excluir o cadastro de ${nome}? A pessoa perde o acesso e as conversas e mensagens dela são removidas. Não pode ser desfeito.`;
+          const aviso = `Excluir o cadastro de ${nome}? A pessoa perde o acesso e os atendimentos e mensagens dela são removidos. Não pode ser desfeito.`;
           if (!confirm(aviso)) return;
           const { error: erroExcluir } = await sb.rpc("excluir_usuario", { p_usuario: card.dataset.id });
           if (erroExcluir) return alert("Não foi possível excluir: " + erroExcluir.message);
