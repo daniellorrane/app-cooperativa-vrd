@@ -480,6 +480,10 @@
 
   function telaRecusado(perfil) {
     renderizar("tpl-recusado");
+    if (perfil.status === "bloqueado") {
+      app.querySelector("h1").textContent = "Acesso suspenso";
+      app.querySelector("p").textContent = "Seu acesso está suspenso no momento.";
+    }
     document.getElementById("motivo-recusa").textContent =
       perfil.motivo_recusa || "Entre em contato com a cooperativa para mais informações.";
   }
@@ -489,31 +493,33 @@
     mostrarBotaoSair(true);
     window.Interno.abrirPainel(perfil, app, hash, {
       "meus-dados": (destino) => telaMeusDados(perfil, destino),
-      "admin/cadastros": (destino) => telaCadastros(destino),
+      "admin/cadastros": (destino) => telaCadastros(destino, perfil),
     });
   }
 
   // Aprovação de cadastros (somente administrador).
-  function telaCadastros(destino) {
+  function telaCadastros(destino, admin) {
     destino.innerHTML = `
-      <h1>Aprovar cadastros</h1>
-      <p class="ajuda">Confira os dados antes de aprovar. Quem for recusado pode ver o motivo informado.</p>
+      <h1>Cadastros</h1>
+      <p class="ajuda">Confira os dados antes de aprovar. Inativar suspende o acesso sem apagar nada. Excluir remove o cadastro, as conversas e as mensagens da pessoa.</p>
       <div class="filtros">
         <button class="chip ativo" data-filtro="pendente">Pendentes</button>
         <button class="chip" data-filtro="aprovado">Aprovados</button>
         <button class="chip" data-filtro="recusado">Recusados</button>
+        <button class="chip" data-filtro="bloqueado">Inativos</button>
       </div>
       <div id="lista-cadastros"></div>`;
     destino.querySelectorAll(".chip").forEach((chip) => {
       chip.addEventListener("click", () => {
         destino.querySelectorAll(".chip").forEach((c) => c.classList.toggle("ativo", c === chip));
-        carregarCadastros(chip.dataset.filtro);
+        carregarCadastros(chip.dataset.filtro, admin);
       });
     });
-    carregarCadastros("pendente");
+    carregarCadastros("pendente", admin);
   }
 
-  async function carregarCadastros(status) {
+  // Ações disponíveis em cada situação. Quem é administrador não age sobre a própria conta.
+  async function carregarCadastros(status, admin) {
     const lista = document.getElementById("lista-cadastros");
     lista.innerHTML = '<p class="ajuda">Carregando...</p>';
     const { data, error } = await sb
@@ -523,7 +529,7 @@
       .order("criado_em", { ascending: true });
 
     if (error) {
-      lista.innerHTML = `<p class="erro">Não foi possível carregar: ${error.message}</p>`;
+      lista.innerHTML = `<p class="erro">Não foi possível carregar: ${escapar(error.message)}</p>`;
       return;
     }
     if (!data.length) {
@@ -531,39 +537,51 @@
       return;
     }
 
-    lista.innerHTML = data.map((u) => `
+    lista.innerHTML = data.map((u) => {
+      const acoes = [];
+      if (u.status === "pendente") acoes.push(["aprovado", "Aprovar", "btn-primario"], ["recusado", "Recusar", "btn-ghost"]);
+      if (u.status === "aprovado") acoes.push(["bloqueado", "Inativar", "btn-ghost"]);
+      if (u.status === "recusado") acoes.push(["aprovado", "Aprovar", "btn-primario"]);
+      if (u.status === "bloqueado") acoes.push(["aprovado", "Reativar", "btn-primario"]);
+      const eu = u.id === admin.id;
+      return `
       <article class="item" data-id="${u.id}">
         <div>
           <strong>${escapar(u.nome_completo)}</strong>
           <span class="etiqueta">${escapar(u.tipo_acesso.replace("_", " "))}</span>
         </div>
         <p class="ajuda">CPF ${formatarCpf(u.cpf)} · ${escapar(u.email)} · ${formatarTelefone(u.telefone)}</p>
-        ${status === "pendente" ? `
+        ${eu ? '<p class="ajuda">Esta é a sua conta.</p>' : `
           <div class="acoes">
-            <button class="btn-primario" data-acao="aprovado">Aprovar</button>
-            <button class="btn-perigo" data-acao="recusado">Recusar</button>
-          </div>` : ""}
-      </article>`).join("");
+            ${acoes.map(([acao, rotulo, classe]) => `<button class="${classe}" data-acao="${acao}">${rotulo}</button>`).join("")}
+            <button class="btn-perigo" data-acao="excluir">Excluir</button>
+          </div>`}
+      </article>`;
+    }).join("");
 
     lista.querySelectorAll("[data-acao]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const card = btn.closest(".item");
-        const novoStatus = btn.dataset.acao;
-        let motivo = null;
-        if (novoStatus === "recusado") {
-          motivo = prompt("Motivo da recusa (opcional):") || null;
+        const acao = btn.dataset.acao;
+        const nome = card.querySelector("strong").textContent;
+
+        if (acao === "excluir") {
+          const aviso = `Excluir o cadastro de ${nome}? A pessoa perde o acesso e as conversas e mensagens dela são removidas. Não pode ser desfeito.`;
+          if (!confirm(aviso)) return;
+          const { error: erroExcluir } = await sb.rpc("excluir_usuario", { p_usuario: card.dataset.id });
+          if (erroExcluir) return alert("Não foi possível excluir: " + erroExcluir.message);
+        } else {
+          if (acao === "bloqueado" && !confirm(`Inativar ${nome}? A pessoa não conseguirá entrar até ser reativada.`)) return;
+          const campos = { status: acao };
+          if (acao === "aprovado" || acao === "recusado") {
+            campos.motivo_recusa = acao === "recusado" ? (prompt("Motivo da recusa (opcional):") || null) : null;
+            campos.aprovado_por = admin.id;
+            campos.aprovado_em = new Date().toISOString();
+          }
+          const { error: erroUpd } = await sb.from("usuarios").update(campos).eq("id", card.dataset.id);
+          if (erroUpd) return alert("Não foi possível atualizar: " + erroUpd.message);
         }
-        const { data: { user } } = await sb.auth.getUser();
-        const { error: erroUpd } = await sb
-          .from("usuarios")
-          .update({
-            status: novoStatus,
-            motivo_recusa: motivo,
-            aprovado_por: user.id,
-            aprovado_em: new Date().toISOString(),
-          })
-          .eq("id", card.dataset.id);
-        if (erroUpd) return alert("Não foi possível atualizar: " + erroUpd.message);
+
         card.remove();
         if (!lista.querySelector(".item")) {
           lista.innerHTML = '<p class="ajuda">Nenhum cadastro nesta situação.</p>';

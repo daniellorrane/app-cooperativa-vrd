@@ -42,7 +42,7 @@
     { grupo: "Principal", rota: "nova", titulo: "Nova solicitação", icone: "plus" },
     { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
     { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
-    { grupo: "Administração", rota: "admin/cadastros", titulo: "Aprovar cadastros", icone: "check", admin: true },
+    { grupo: "Administração", rota: "admin/cadastros", titulo: "Cadastros", icone: "check", admin: true },
     { grupo: "Administração", rota: "admin/areas", titulo: "Áreas e funcionários", icone: "map", admin: true },
     { grupo: "Administração", rota: "admin/documentos", titulo: "Termos e privacidade", icone: "doc", admin: true },
   ];
