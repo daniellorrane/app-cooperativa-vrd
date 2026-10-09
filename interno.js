@@ -49,6 +49,7 @@
     { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
     { grupo: "Principal", rota: "avisos", titulo: "Enviar aviso", icone: "send", staff: true },
     { grupo: "Principal", rota: "respostas", titulo: "Respostas rápidas", icone: "chat", staff: true },
+    { grupo: "Principal", rota: "ajuda", titulo: "Central de ajuda", icone: "help" },
     { grupo: "Principal", rota: "ouvidoria", titulo: "Ouvidoria", icone: "flag" },
     { grupo: "Conta", rota: "carteirinha", titulo: "Carteirinha digital", icone: "id" },
     { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
@@ -75,6 +76,7 @@
     book: "M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z",
     poll: "M4 20h16M7 16V11M12 16V6M17 16v-4",
     id: "M3 6h18v12H3zM7 10a2 2 0 1 0 0 .01M13 10h5M13 14h4",
+    help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01",
   };
   const icone = (nome) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONES[nome]}"/></svg>`;
 
@@ -145,6 +147,7 @@
       biblioteca: () => window.Biblioteca.tela(alvo(), perfil, caminho[1]),
       enquetes: () => window.Enquetes.tela(alvo(), perfil, caminho[1]),
       carteirinha: () => window.Carteirinha.tela(alvo(), perfil),
+      ajuda: () => window.Ajuda.tela(alvo(), perfil, caminho),
       respostas: () => (equipe ? window.Atendimento.respostasRapidas(alvo(), perfil) : telaInicio()),
       nova: telaNova,
       notificacoes: telaNotificacoes,
@@ -329,6 +332,7 @@
           <label>Assunto
             <input type="text" name="assunto" required minlength="3" maxlength="150" />
           </label>
+          <div id="sugestoes-ajuda" class="sugestoes-ajuda" hidden></div>
           <label>Mensagem
             <textarea name="texto" rows="5" required maxlength="4000"></textarea>
           </label>
@@ -339,6 +343,8 @@
 
     const form = document.getElementById("form-nova");
     const erro = form.querySelector(".erro");
+    // Antes de abrir a solicitação, sugere artigos da central de ajuda que combinam com o assunto.
+    window.Ajuda?.sugerirParaAssunto(form.assunto, document.getElementById("sugestoes-ajuda"));
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       erro.hidden = true;

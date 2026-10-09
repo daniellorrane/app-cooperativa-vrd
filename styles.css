@@ -302,6 +302,17 @@ form input:disabled { background: var(--fundo); color: var(--cinza); }
 .validacao.invalida h1 { color: #a4262c; }
 .validacao-nome { font-size: 20px; font-weight: 700; margin: 8px 0; }
 
+/* Central de ajuda */
+.sugestoes-ajuda {
+  padding: 12px 14px;
+  border: 1px solid var(--verde);
+  border-radius: 10px;
+  background: var(--verde-claro);
+}
+.sugestoes-ajuda p { margin: 6px 0; }
+.sugestoes-ajuda .lista-respostas li { border-bottom: 0; padding: 4px 0; }
+.sugestoes-ajuda a { color: var(--verde); font-weight: 600; }
+
 /* Biblioteca e enquetes */
 .resultado-opcao { padding: 10px 0; border-bottom: 1px solid var(--borda); }
 .resultado-opcao.minha { font-weight: 600; }
