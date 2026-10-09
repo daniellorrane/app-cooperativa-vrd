@@ -390,10 +390,11 @@
     const form = document.getElementById("form-cadastro");
     const lista = document.getElementById("lista-tipos");
 
-    const tipos = await carregarTipos();
-    lista.innerHTML = tipos.map((t, i) => `
+    // Administrador é criado pela cooperativa, não escolhido no cadastro público.
+    const tipos = (await carregarTipos()).filter((t) => t.codigo !== "administrador");
+    lista.innerHTML = tipos.map((t) => `
       <label class="opcao">
-        <input type="radio" name="tipo" value="${t.codigo}" ${i === 0 ? "checked" : ""} required />
+        <input type="radio" name="tipo" value="${t.codigo}" />
         <span>${t.descricao}</span>
       </label>`).join("");
 
@@ -424,6 +425,7 @@
         telefone: telefoneParaBanco(form.telefone.value),
       };
 
+      if (!dados.tipo) return mostrarErro(form, "Escolha o seu tipo de acesso.");
       if (dados.nome.split(" ").length < 2) return mostrarErro(form, "Informe o nome completo.");
       if (!cpfValido(dados.cpf)) return mostrarErro(form, "CPF inválido. Confira os números.");
       if (dados.senha.length < 8) return mostrarErro(form, "A senha precisa ter pelo menos 8 caracteres.");
