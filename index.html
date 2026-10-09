@@ -144,6 +144,12 @@
         <button type="submit" class="btn-perigo">Excluir minha conta</button>
       </form>
 
+      <h2>Notificações no aparelho</h2>
+      <p class="ajuda" id="push-status">Verificando...</p>
+      <div class="acoes">
+        <button type="button" id="push-botao" class="btn-primario" hidden>Ativar notificações</button>
+      </div>
+
       <h2>Documentos</h2>
       <p class="ajuda">Leia a versão vigente dos documentos que você aceitou.</p>
       <p class="rodape-form"><a href="#termos" target="_blank" rel="noopener">Termos e Condições de Uso</a> · <a href="#privacidade" target="_blank" rel="noopener">Política de Privacidade</a></p>
@@ -207,6 +213,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
+  <script src="push.js"></script>
   <script src="interno.js"></script>
   <script src="app.js"></script>
   <script>

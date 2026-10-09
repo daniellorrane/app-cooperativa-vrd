@@ -293,6 +293,29 @@
       alert("Sua conta foi excluída.");
       rotear();
     });
+
+    // Notificações push deste aparelho.
+    const statusPush = destino.querySelector("#push-status");
+    const botaoPush = destino.querySelector("#push-botao");
+    async function atualizarPush() {
+      const estado = await window.Push.estado();
+      statusPush.textContent = estado.mensagem;
+      botaoPush.hidden = estado.situacao === "indisponivel" || estado.situacao === "bloqueado";
+      botaoPush.textContent = estado.situacao === "ativo" ? "Desativar neste aparelho" : "Ativar notificações";
+      botaoPush.dataset.acao = estado.situacao === "ativo" ? "desativar" : "ativar";
+    }
+    botaoPush.addEventListener("click", async () => {
+      botaoPush.disabled = true;
+      try {
+        if (botaoPush.dataset.acao === "ativar") await window.Push.ativar();
+        else await window.Push.desativar();
+      } catch (erro) {
+        alert("Não foi possível alterar as notificações: " + erro.message);
+      }
+      botaoPush.disabled = false;
+      atualizarPush();
+    });
+    atualizarPush();
   }
 
   // Termos e Condições: texto em blocos. Títulos numerados viram subtítulos.
