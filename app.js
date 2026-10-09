@@ -239,10 +239,12 @@
       mostrarErro(form, "");
       sucesso.hidden = true;
       const nome = form.nome.value.trim().replace(/\s+/g, " ");
-      const telefone = telefoneParaBanco(form.telefone.value);
+      // Contas de setor não têm celular cadastrado: o campo pode continuar vazio.
+      const semTelefone = !form.telefone.value.trim() && !perfil.telefone;
+      const telefone = semTelefone ? null : telefoneParaBanco(form.telefone.value);
 
       if (nome.split(" ").length < 2) return mostrarErro(form, "Informe o nome completo.");
-      if (!telefoneValido(telefone)) return mostrarErro(form, "Celular inválido. Use o formato +55(33)999058391.");
+      if (!semTelefone && !telefoneValido(telefone)) return mostrarErro(form, "Celular inválido. Use o formato +55(33)999058391.");
 
       const btn = form.querySelector("button");
       btn.disabled = true;
