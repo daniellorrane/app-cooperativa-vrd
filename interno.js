@@ -42,10 +42,13 @@
     { grupo: "Principal", rota: "nova", titulo: "Nova solicitação", icone: "plus" },
     { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
     { grupo: "Principal", rota: "avisos", titulo: "Enviar aviso", icone: "send", staff: true },
+    { grupo: "Principal", rota: "ouvidoria", titulo: "Ouvidoria", icone: "flag" },
     { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
+    { grupo: "Conta", rota: "meus-direitos", titulo: "Privacidade e dados", icone: "shield" },
     { grupo: "Administração", rota: "admin/cadastros", titulo: "Cadastros", icone: "check", admin: true },
     { grupo: "Administração", rota: "admin/areas", titulo: "Áreas e funcionários", icone: "map", admin: true },
     { grupo: "Administração", rota: "admin/documentos", titulo: "Termos e privacidade", icone: "doc", admin: true },
+    { grupo: "Administração", rota: "admin/privacidade", titulo: "Privacidade e ouvidoria", icone: "shield", admin: true },
   ];
 
   const ICONES = {
@@ -58,6 +61,8 @@
     map: "M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z",
     doc: "M7 3h7l5 5v13H7z",
     send: "M4 12l16-8-6 16-3-7z",
+    shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z",
+    flag: "M5 21V4h12l-2 4 2 4H5",
   };
   const icone = (nome) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONES[nome]}"/></svg>`;
 
@@ -127,6 +132,9 @@
       notificacoes: telaNotificacoes,
       avisos: () => (equipe ? telaAvisos() : telaInicio()),
       "meus-dados": () => extras["meus-dados"]?.(alvo()),
+      "meus-direitos": () => window.Privacidade.meusDireitos(alvo(), perfil),
+      ouvidoria: () => window.Privacidade.ouvidoria(alvo(), perfil),
+      "admin/privacidade": () => (admin ? window.Privacidade.adminPrivacidade(alvo(), perfil) : telaInicio()),
       "admin/cadastros": () => (admin ? extras["admin/cadastros"]?.(alvo()) : telaInicio()),
       "admin/areas": () => (admin ? telaAreas() : telaInicio()),
       "admin/documentos": () => (admin ? telaDocumentos() : telaInicio()),

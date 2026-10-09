@@ -1,7 +1,7 @@
 // Cache mínimo para abrir a casca do app offline, e recebimento de notificações push.
 // Nunca faz cache de chamadas ao Supabase, para não mostrar dados desatualizados.
-const CACHE = "coop-vrd-v3";
-const ARQUIVOS = ["./", "index.html", "styles.css", "app.js", "interno.js", "push.js", "config.js", "registro-sw.js", "manifest.webmanifest", "icons/icon.svg"];
+const CACHE = "coop-vrd-v4";
+const ARQUIVOS = ["./", "index.html", "styles.css", "app.js", "interno.js", "privacidade.js", "push.js", "config.js", "registro-sw.js", "manifest.webmanifest", "icons/icon.svg"];
 
 self.addEventListener("install", (evento) => {
   evento.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS)));
