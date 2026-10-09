@@ -47,6 +47,7 @@
     if (visao === "notif") return telaNotificacoes();
     if (visao === "privacidade") return telaPrivacidade();
     if (visao === "areas") return telaAreas();
+    if (visao === "termos-admin") return telaTermosAdmin();
     if (visao === "conversa") return telaConversa(extra);
   }
 
@@ -63,6 +64,7 @@
         <button data-visao="notif" class="chip">Notificações <span id="contador-notif" class="badge" hidden>0</span></button>
         <button data-visao="privacidade" class="chip">Privacidade</button>
         ${perfil.tipo_acesso === "administrador" ? '<button data-visao="areas" class="chip">Áreas e funcionários</button>' : ""}
+        ${perfil.tipo_acesso === "administrador" ? '<button data-visao="termos-admin" class="chip">Termos de uso</button>' : ""}
       </nav>
       <div id="conteudo-interno"></div>`;
 
@@ -409,6 +411,82 @@
           alert("Não foi possível alterar o vínculo: " + error.message);
         }
       });
+    });
+  }
+
+  // ---------- Termos de uso (administrador) ----------
+
+  // Sugere o próximo número: 1.0 vira 1.1.
+  function proximaVersao(versao) {
+    const partes = String(versao).split(".");
+    const ultimo = Number(partes.pop());
+    return Number.isInteger(ultimo) ? [...partes, ultimo + 1].join(".") : "";
+  }
+
+  async function telaTermosAdmin() {
+    alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
+    const { data: versoes, error } = await sb()
+      .from("termos_uso")
+      .select("versao, texto, publicado_em")
+      .order("publicado_em", { ascending: false });
+    if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
+
+    const atual = versoes[0];
+    alvo().innerHTML = `
+      <section class="cartao">
+        <h2>Publicar nova versão dos termos</h2>
+        <p class="ajuda">Ao publicar, todos os usuários, novos e já cadastrados, precisarão ler e aceitar a nova versão para continuar usando o sistema. Versões publicadas não podem ser alteradas nem apagadas.</p>
+        <p class="ajuda">O texto inicia com a versão atual para você editar uma cópia. O primeiro bloco é o título; os títulos das cláusulas começam com número, como "2. Cadastro". Separe os blocos com uma linha em branco.</p>
+        <form id="form-termo" novalidate>
+          <label>Número da versão <small>(ex.: 1.1)</small>
+            <input type="text" name="versao" maxlength="20" value="${esc(atual ? proximaVersao(atual.versao) : "1.0")}" required />
+          </label>
+          <label>Texto dos termos
+            <textarea name="texto" rows="18" maxlength="50000" required>${esc(atual ? atual.texto : "")}</textarea>
+          </label>
+          <p class="erro" role="alert" hidden></p>
+          <p class="sucesso" role="status" hidden></p>
+          <button type="submit" class="btn-primario">Publicar versão</button>
+        </form>
+      </section>
+      <section class="cartao">
+        <h2>Versões publicadas</h2>
+        <div class="lista">${versoes.map((v) => `
+          <article class="item">
+            <strong>Versão ${esc(v.versao)}</strong>
+            <p class="ajuda">Publicada em ${dataCurta(v.publicado_em)}${atual && v.versao === atual.versao ? " · vigente" : ""}</p>
+          </article>`).join("")}</div>
+      </section>`;
+
+    const form = document.getElementById("form-termo");
+    const erro = form.querySelector(".erro");
+    const sucesso = form.querySelector(".sucesso");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      erro.hidden = true;
+      sucesso.hidden = true;
+      const versao = form.versao.value.trim();
+      const texto = form.texto.value.trim();
+
+      const mostrarErro = (msg) => { erro.textContent = msg; erro.hidden = false; };
+      if (!/^[\w.-]{1,20}$/.test(versao)) return mostrarErro("Número de versão inválido. Use letras, números, ponto ou hífen.");
+      if (versoes.some((v) => v.versao === versao)) return mostrarErro("Esta versão já existe. Escolha outro número.");
+      if (texto.length < 200) return mostrarErro("O texto parece curto demais para ser os termos completos.");
+      if (!confirm(`Publicar a versão ${versao}? Todos os usuários precisarão aceitá-la.`)) return;
+
+      const botao = form.querySelector("button");
+      botao.disabled = true;
+      const { error: erroPublicar } = await sb().from("termos_uso").insert({ versao, texto });
+      if (erroPublicar) {
+        botao.disabled = false;
+        return mostrarErro("Não foi possível publicar: " + erroPublicar.message);
+      }
+      await telaTermosAdmin();
+      const aviso = alvo().querySelector(".sucesso");
+      if (aviso) {
+        aviso.textContent = `Versão ${versao} publicada. Ela será exigida de todos os usuários no próximo acesso.`;
+        aviso.hidden = false;
+      }
     });
   }
 
