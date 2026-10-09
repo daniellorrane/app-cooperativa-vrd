@@ -263,6 +263,36 @@ textarea, select {
 form input:disabled { background: var(--fundo); color: var(--cinza); }
 .motivo { background: var(--verde-claro); padding: 12px; border-radius: 10px; }
 
+/* Atendimentos: anexos, avaliação e prazo */
+.msg .anexos { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.anexo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  background: var(--branco);
+  color: var(--verde);
+  text-decoration: none;
+  font-size: 14px;
+  word-break: break-all;
+}
+.anexo svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.anexo-campo { display: flex; flex-direction: column; gap: 6px; }
+.anexo-campo input[type=file] { font: inherit; font-size: 15px; }
+.anexo-campo .ajuda { margin: 0; }
+.estrelas { display: flex; flex-direction: row; gap: 6px; flex-wrap: wrap; border: 0; padding: 0; margin: 0; }
+.estrelas legend { font-weight: 600; margin-bottom: 6px; }
+.estrelas .opcao { min-width: 48px; min-height: 44px; justify-content: center; cursor: pointer; }
+.estrelas input[type=radio] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.estrelas .opcao:has(input:checked) { background: var(--verde); color: var(--branco); border-color: var(--verde); }
+.estrelas .opcao:has(input:focus-visible) { outline: 3px solid var(--verde); outline-offset: 2px; }
+.linha-prazo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.campo-prazo { display: flex; align-items: center; gap: 8px; margin: 0; }
+.campo-prazo input { width: 110px; font: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--borda); border-radius: 10px; }
+
 .rodape-form { margin-top: 20px; font-size: 14px; color: var(--cinza); }
 .rodape-form a, a { color: var(--verde); font-weight: 600; }
 

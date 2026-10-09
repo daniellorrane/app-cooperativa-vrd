@@ -19,6 +19,9 @@
     servico: "Solicitação de serviço",
   };
 
+  // Situações em que o atendimento ainda está em andamento (prazo e responsável contam).
+  const ABERTO = ["aberta", "em_andamento"];
+
   // Documentos versionados que exigem aceite: cadastro e a cada nova versão publicada.
   const DOCS = {
     termos: {
@@ -42,6 +45,7 @@
     { grupo: "Principal", rota: "nova", titulo: "Nova solicitação", icone: "plus" },
     { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
     { grupo: "Principal", rota: "avisos", titulo: "Enviar aviso", icone: "send", staff: true },
+    { grupo: "Principal", rota: "respostas", titulo: "Respostas rápidas", icone: "chat", staff: true },
     { grupo: "Principal", rota: "ouvidoria", titulo: "Ouvidoria", icone: "flag" },
     { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
     { grupo: "Conta", rota: "meus-direitos", titulo: "Privacidade e dados", icone: "shield" },
@@ -81,6 +85,7 @@
       sb().removeChannel(canalMensagens);
       canalMensagens = null;
     }
+    window.Atendimento?.sair();
   }
 
   // ---------- Casca do painel ----------
@@ -127,7 +132,8 @@
     const telas = {
       inicio: telaInicio,
       conversas: telaConversas,
-      conversa: () => telaConversa(caminho[1]),
+      conversa: () => window.Atendimento.abrir(alvo(), perfil, caminho[1]),
+      respostas: () => (equipe ? window.Atendimento.respostasRapidas(alvo(), perfil) : telaInicio()),
       nova: telaNova,
       notificacoes: telaNotificacoes,
       avisos: () => (equipe ? telaAvisos() : telaInicio()),
@@ -242,10 +248,11 @@
     alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
     const { data, error } = await sb()
       .from("conversas")
-      .select("id, assunto, tipo, status, atualizado_em, solicitante_id, areas(nome)")
+      .select("id, assunto, tipo, status, atualizado_em, solicitante_id, responsavel_id, prazo_em, areas(nome)")
       .order("atualizado_em", { ascending: false });
     if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
 
+    const equipeVe = perfil.tipo_acesso === "administrador" || perfil.tipo_acesso === "funcionario";
     const filtros = [["todas", "Todas"], ["aberta", "Abertas"], ["em_andamento", "Em andamento"], ["concluida", "Concluídas"]];
     let filtroAtivo = "todas";
 
@@ -270,7 +277,7 @@
             <strong>${esc(c.assunto)}</strong>
             <span class="etiqueta">${c.solicitante_id === perfil.id ? "Minha" : "Recebida"}</span>
           </div>
-          <p class="ajuda">${esc(TIPOS[c.tipo])} · ${esc(c.areas?.nome)} · ${STATUS[c.status]} · ${dataCurta(c.atualizado_em)}</p>
+          <p class="ajuda">${esc(TIPOS[c.tipo])} · ${esc(c.areas?.nome)} · ${STATUS[c.status]} · prazo até ${dataCurta(c.prazo_em)}${ABERTO.includes(c.status) && c.prazo_em && new Date(c.prazo_em) < new Date() ? ' · <span class="erro">prazo vencido</span>' : ""}${equipeVe && !c.responsavel_id && ABERTO.includes(c.status) ? ' · <span class="etiqueta">Pendente</span>' : ""}</p>
         </article>`).join("") : '<p class="ajuda">Nenhuma solicitação nesta situação.</p>';
 
       lista.querySelectorAll("[data-id]").forEach((el) => {
@@ -353,105 +360,6 @@
         return;
       }
       location.hash = "conversa/" + conversa.id;
-    });
-  }
-
-  async function telaConversa(id) {
-    alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
-    const { data: conversa, error } = await sb()
-      .from("conversas")
-      .select("id, assunto, tipo, status, solicitante_id, areas(nome)")
-      .eq("id", id)
-      .single();
-    if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
-
-    const souSolicitante = conversa.solicitante_id === perfil.id;
-    const nomeArea = conversa.areas?.nome || "Atendimento";
-
-    alvo().innerHTML = `
-      <section class="cartao">
-        <a href="#conversas" class="btn-ghost">Voltar aos atendimentos</a>
-        <h1 class="titulo-conversa">${esc(conversa.assunto)}</h1>
-        <p class="ajuda">${esc(TIPOS[conversa.tipo])} · ${esc(nomeArea)}</p>
-        ${souSolicitante ? "" : `
-          <label>Status
-            <select id="status" class="seletor-status">
-              ${Object.entries(STATUS).map(([v, r]) => `<option value="${v}" ${v === conversa.status ? "selected" : ""}>${r}</option>`).join("")}
-            </select>
-          </label>`}
-        <div id="chat" class="chat" aria-live="polite"></div>
-        <form id="form-mensagem" class="form-mensagem" novalidate>
-          <textarea name="texto" rows="2" maxlength="4000" required placeholder="Escreva uma mensagem"></textarea>
-          <button type="submit" class="btn-primario">Enviar</button>
-        </form>
-        <p class="erro" role="alert" hidden></p>
-      </section>`;
-
-    const selectStatus = document.getElementById("status");
-    if (selectStatus) {
-      selectStatus.addEventListener("change", async () => {
-        const { error: erroStatus } = await sb()
-          .from("conversas")
-          .update({ status: selectStatus.value })
-          .eq("id", id);
-        if (erroStatus) alert("Não foi possível alterar o status: " + erroStatus.message);
-      });
-    }
-
-    const chat = document.getElementById("chat");
-    const exibidas = new Set();
-
-    function adicionar(msg) {
-      if (exibidas.has(msg.id)) return;
-      exibidas.add(msg.id);
-      const eu = msg.autor_id === perfil.id;
-      const cooperado = msg.autor_id !== null && msg.autor_id === conversa.solicitante_id;
-      // Autor nulo: conta excluída com histórico mantido de forma anônima.
-      const autor = msg.autor_id === null ? "Usuário removido"
-        : eu ? "Você"
-        : cooperado ? "Cooperado"
-        : "Equipe " + nomeArea;
-      const item = document.createElement("div");
-      item.className = "msg " + (eu ? "eu" : "outro");
-      item.innerHTML = `<small>${esc(autor)} · ${dataCurta(msg.criado_em)}</small>${esc(msg.texto).replace(/\n/g, "<br>")}`;
-      chat.appendChild(item);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    const { data: mensagens } = await sb()
-      .from("mensagens")
-      .select("id, texto, autor_id, criado_em")
-      .eq("conversa_id", id)
-      .order("criado_em", { ascending: true });
-    (mensagens || []).forEach(adicionar);
-
-    canalMensagens = sb()
-      .channel("msg-" + id)
-      .on("postgres_changes", {
-        event: "INSERT", schema: "public", table: "mensagens",
-        filter: "conversa_id=eq." + id,
-      }, (payload) => adicionar(payload.new))
-      .subscribe();
-
-    const form = document.getElementById("form-mensagem");
-    const erro = form.parentElement.querySelector(".erro");
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      erro.hidden = true;
-      const texto = form.texto.value.trim();
-      if (!texto) return;
-      const { data: nova, error: erroEnvio } = await sb()
-        .from("mensagens")
-        .insert({ conversa_id: id, autor_id: perfil.id, texto })
-        .select("id, texto, autor_id, criado_em")
-        .single();
-      if (erroEnvio) {
-        erro.textContent = "Não foi possível enviar: " + erroEnvio.message;
-        erro.hidden = false;
-        return;
-      }
-      form.texto.value = "";
-      adicionar(nova);
     });
   }
 
@@ -548,16 +456,41 @@
   async function telaAreas() {
     alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
     const [{ data: areas }, { data: funcionarios }, { data: vinculos }] = await Promise.all([
-      sb().from("areas").select("id, nome").order("nome"),
+      sb().from("areas").select("id, nome, prazo_horas").order("nome"),
       sb().from("usuarios").select("id, nome_completo").eq("tipo_acesso", "funcionario").eq("status", "aprovado").order("nome_completo"),
       sb().from("funcionarios_areas").select("usuario_id, area_id"),
     ]);
 
     alvo().innerHTML = `
       <h1>Áreas e funcionários</h1>
+      <p class="ajuda">Defina o prazo de resposta de cada área. Quando o prazo vence sem resposta, o atendimento é sinalizado como atrasado.</p>
+      <div class="lista">${areas.map((a) => `
+        <article class="item linha-prazo">
+          <strong>${esc(a.nome)}</strong>
+          <label class="campo-prazo">Prazo em horas
+            <input type="number" min="1" max="2160" step="1" value="${Number(a.prazo_horas) || 48}" data-prazo="${a.id}" />
+          </label>
+        </article>`).join("")}</div>
+      <h2>Vínculos de funcionários</h2>
       <p class="ajuda">Marque em quais áreas cada funcionário atua. Ele verá somente as solicitações dessas áreas.</p>
       <div id="lista-vinculos"></div>
       <p class="erro" hidden></p>`;
+
+    alvo().querySelectorAll("input[data-prazo]").forEach((campo) => {
+      campo.addEventListener("change", async () => {
+        const horas = Number(campo.value);
+        if (!Number.isInteger(horas) || horas < 1 || horas > 2160) {
+          alert("Informe um prazo entre 1 e 2160 horas.");
+          campo.value = areas.find((a) => a.id === campo.dataset.prazo)?.prazo_horas ?? 48;
+          return;
+        }
+        const { error } = await sb().from("areas").update({ prazo_horas: horas }).eq("id", campo.dataset.prazo);
+        if (error) {
+          alert("Não foi possível salvar o prazo: " + error.message);
+          campo.value = areas.find((a) => a.id === campo.dataset.prazo)?.prazo_horas ?? 48;
+        }
+      });
+    });
 
     if (!funcionarios.length) {
       document.getElementById("lista-vinculos").innerHTML = '<p class="ajuda">Ainda não há funcionários aprovados para vincular às áreas.</p>';
