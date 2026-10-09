@@ -1,5 +1,7 @@
 (() => {
   const { createClient } = supabase;
+  // Guarda se o endereço veio de um link de recuperação antes do Supabase limpá-lo.
+  let modoRecuperacao = location.hash.includes("type=recovery");
   const sb = createClient(window.APP_CONFIG.SUPABASE_URL, window.APP_CONFIG.SUPABASE_KEY);
 
   const app = document.getElementById("app");
@@ -169,7 +171,10 @@
       const { error } = await sb.auth.updateUser({ password: senha });
       btn.disabled = false;
       if (error) return mostrarErro(form, traduzirErro(error));
+      modoRecuperacao = false;
+      await sb.auth.signOut();
       location.hash = "";
+      alert("Senha alterada com sucesso. Entre com a nova senha.");
       rotear();
     });
   }
@@ -192,6 +197,34 @@
       e.preventDefault();
       location.hash = "";
       rotear();
+    });
+
+    const formSenha = document.getElementById("form-alterar-senha");
+    const sucessoSenha = formSenha.querySelector(".sucesso");
+    formSenha.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      mostrarErro(formSenha, "");
+      sucessoSenha.hidden = true;
+      const atual = formSenha.senha_atual.value;
+      const nova = formSenha.nova_senha.value;
+      if (!atual) return mostrarErro(formSenha, "Informe a senha atual.");
+      if (nova.length < 8) return mostrarErro(formSenha, "A nova senha precisa ter pelo menos 8 caracteres.");
+      if (nova !== formSenha.confirmacao.value) return mostrarErro(formSenha, "As senhas não conferem.");
+
+      const btn = formSenha.querySelector("button");
+      btn.disabled = true;
+      // Confirma a senha atual antes de trocar, para proteger a conta caso alguém use uma sessão aberta.
+      const { error: erroAtual } = await sb.auth.signInWithPassword({ email: perfil.email, password: atual });
+      if (erroAtual) {
+        btn.disabled = false;
+        return mostrarErro(formSenha, "A senha atual está incorreta.");
+      }
+      const { error } = await sb.auth.updateUser({ password: nova });
+      btn.disabled = false;
+      if (error) return mostrarErro(formSenha, traduzirErro(error));
+      formSenha.reset();
+      sucessoSenha.textContent = "Senha alterada com sucesso.";
+      sucessoSenha.hidden = false;
     });
 
     form.addEventListener("submit", async (e) => {
@@ -407,8 +440,7 @@
 
   async function rotear() {
     try {
-      // Link de recuperação de senha chega com type=recovery no endereço.
-      if (location.hash.includes("type=recovery")) return telaRedefinir();
+      if (modoRecuperacao) return telaRedefinir();
       const hash = location.hash.replace("#", "");
       const { data: { session } } = await sb.auth.getSession();
 
@@ -438,7 +470,10 @@
   window.addEventListener("hashchange", rotear);
   sb.auth.onAuthStateChange((evento) => {
     // Clique no link do e-mail de recuperação: mostra o formulário de nova senha.
-    if (evento === "PASSWORD_RECOVERY") return telaRedefinir();
+    if (evento === "PASSWORD_RECOVERY") {
+      modoRecuperacao = true;
+      return telaRedefinir();
+    }
     if (evento === "SIGNED_OUT") rotear();
   });
 

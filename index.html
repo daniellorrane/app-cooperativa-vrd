@@ -99,6 +99,23 @@
         <p class="sucesso" role="status" hidden></p>
         <button type="submit" class="btn-primario">Salvar alterações</button>
       </form>
+
+      <h2>Alterar senha</h2>
+      <form id="form-alterar-senha" novalidate>
+        <label>Senha atual
+          <input type="password" name="senha_atual" autocomplete="current-password" required />
+        </label>
+        <label>Nova senha <small>(mínimo de 8 caracteres)</small>
+          <input type="password" name="nova_senha" autocomplete="new-password" required minlength="8" />
+        </label>
+        <label>Confirme a nova senha
+          <input type="password" name="confirmacao" autocomplete="new-password" required minlength="8" />
+        </label>
+        <p class="erro" role="alert" hidden></p>
+        <p class="sucesso" role="status" hidden></p>
+        <button type="submit" class="btn-primario">Alterar senha</button>
+      </form>
+
       <p class="rodape-form"><a href="#" id="voltar-painel">Voltar ao painel</a></p>
     </section>
   </template>
