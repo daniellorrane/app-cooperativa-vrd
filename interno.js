@@ -19,6 +19,36 @@
     servico: "Solicitação de serviço",
   };
 
+  // Documentos versionados que exigem aceite: cadastro e a cada nova versão publicada.
+  const DOCS = {
+    termos: {
+      tabela: "termos_uso",
+      titulo: "Termos e Condições de Uso",
+      campoVersao: "termo_versao",
+      campoAceite: "termo_aceito_em",
+      rota: "termos",
+    },
+    privacidade: {
+      tabela: "politicas_privacidade",
+      titulo: "Política de Privacidade",
+      campoVersao: "privacidade_versao",
+      campoAceite: "privacidade_aceita_em",
+      rota: "privacidade",
+    },
+  };
+
+  // Versão vigente de um documento (a publicada mais recente). Retorna null se não for possível ler.
+  async function carregarVigente(tipo) {
+    const { data, error } = await sb()
+      .from(DOCS[tipo].tabela)
+      .select("versao, texto, publicado_em")
+      .order("publicado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data;
+  }
+
   function esc(texto) {
     const d = document.createElement("div");
     d.textContent = texto ?? "";
@@ -47,7 +77,8 @@
     if (visao === "notif") return telaNotificacoes();
     if (visao === "privacidade") return telaPrivacidade();
     if (visao === "areas") return telaAreas();
-    if (visao === "termos-admin") return telaTermosAdmin();
+    if (visao === "termos-admin") return telaPublicarDocumento("termos");
+    if (visao === "privacidade-admin") return telaPublicarDocumento("privacidade");
     if (visao === "conversa") return telaConversa(extra);
   }
 
@@ -64,7 +95,8 @@
         <button data-visao="notif" class="chip">Notificações <span id="contador-notif" class="badge" hidden>0</span></button>
         <button data-visao="privacidade" class="chip">Privacidade</button>
         ${perfil.tipo_acesso === "administrador" ? '<button data-visao="areas" class="chip">Áreas e funcionários</button>' : ""}
-        ${perfil.tipo_acesso === "administrador" ? '<button data-visao="termos-admin" class="chip">Termos de uso</button>' : ""}
+        ${perfil.tipo_acesso === "administrador" ? '<button data-visao="termos-admin" class="chip">Publicar termos de uso</button>' : ""}
+        ${perfil.tipo_acesso === "administrador" ? '<button data-visao="privacidade-admin" class="chip">Publicar política de privacidade</button>' : ""}
       </nav>
       <div id="conteudo-interno"></div>`;
 
@@ -343,30 +375,18 @@
 
   async function telaPrivacidade() {
     alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
-    const { data: termo } = await sb()
-      .from("termos_uso")
-      .select("versao, texto")
-      .order("publicado_em", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const documentos = await Promise.all(Object.keys(DOCS).map(async (tipo) => ({ tipo, doc: await carregarVigente(tipo) })));
 
-    alvo().innerHTML = `
+    alvo().innerHTML = documentos.map(({ tipo, doc }) => `
       <section class="cartao texto-legal">
-        <h2>Política de privacidade</h2>
-        <p><strong>Dados tratados:</strong> nome, CPF, e-mail, celular e o conteúdo das conversas e solicitações que você abrir.</p>
-        <p><strong>Finalidade:</strong> atendimento ao cooperado e às pessoas que se relacionam com a cooperativa, incluindo solicitações de documentos e serviços.</p>
-        <p><strong>Quem tem acesso:</strong> você, o administrador e somente os funcionários vinculados à área para a qual a solicitação foi enviada. Funcionários de outras áreas não veem essas conversas.</p>
-        <p><strong>Notificações:</strong> os avisos não trazem o assunto nem o conteúdo das mensagens.</p>
-        <p><strong>Retenção:</strong> as conversas são mantidas pelo prazo necessário ao atendimento e ao cumprimento de obrigações legais, conforme regras definidas pela cooperativa.</p>
-        <p><strong>Seus direitos (LGPD):</strong> confirmar o tratamento, acessar, corrigir, solicitar a eliminação dos seus dados, obter informações sobre compartilhamento e revogar seu consentimento. Você pode corrigir seus dados em <a href="#meus-dados">Meus dados</a> e excluir sua conta na mesma tela.</p>
-      </section>
-      <section class="cartao texto-legal">
-        <h2>Termos e Condições de Uso</h2>
-        ${termo
-          ? `<p class="ajuda">Versão ${esc(termo.versao)}. Você aceitou esta versão ao entrar no sistema.</p>
-             <div class="texto-puro">${esc(termo.texto)}</div>`
-          : '<p class="erro">Não foi possível carregar os termos agora.</p>'}
-      </section>`;
+        <h2>${esc(DOCS[tipo].titulo)}</h2>
+        ${doc
+          ? `<p class="ajuda">Versão ${esc(doc.versao)}. ${perfilAtual[DOCS[tipo].campoVersao] === doc.versao
+              ? "Você aceitou esta versão."
+              : "Aceite pendente."}</p>
+             <div class="texto-puro">${esc(doc.texto)}</div>`
+          : '<p class="erro">Não foi possível carregar este documento agora.</p>'}
+      </section>`).join("");
   }
 
   // ---------- Áreas e funcionários (administrador) ----------
@@ -423,10 +443,11 @@
     return Number.isInteger(ultimo) ? [...partes, ultimo + 1].join(".") : "";
   }
 
-  async function telaTermosAdmin() {
+  async function telaPublicarDocumento(tipo) {
+    const doc = DOCS[tipo];
     alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
     const { data: versoes, error } = await sb()
-      .from("termos_uso")
+      .from(doc.tabela)
       .select("versao, texto, publicado_em")
       .order("publicado_em", { ascending: false });
     if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
@@ -434,7 +455,7 @@
     const atual = versoes[0];
     alvo().innerHTML = `
       <section class="cartao">
-        <h2>Publicar nova versão dos termos</h2>
+        <h2>Publicar nova versão: ${esc(doc.titulo)}</h2>
         <p class="ajuda">Ao publicar, todos os usuários, novos e já cadastrados, precisarão ler e aceitar a nova versão para continuar usando o sistema. Versões publicadas não podem ser alteradas nem apagadas.</p>
         <p class="ajuda">O texto inicia com a versão atual para você editar uma cópia. O primeiro bloco é o título; os títulos das cláusulas começam com número, como "2. Cadastro". Separe os blocos com uma linha em branco.</p>
         <form id="form-termo" novalidate>
@@ -476,12 +497,12 @@
 
       const botao = form.querySelector("button");
       botao.disabled = true;
-      const { error: erroPublicar } = await sb().from("termos_uso").insert({ versao, texto });
+      const { error: erroPublicar } = await sb().from(doc.tabela).insert({ versao, texto });
       if (erroPublicar) {
         botao.disabled = false;
         return mostrarErro("Não foi possível publicar: " + erroPublicar.message);
       }
-      await telaTermosAdmin();
+      await telaPublicarDocumento(tipo);
       const aviso = alvo().querySelector(".sucesso");
       if (aviso) {
         aviso.textContent = `Versão ${versao} publicada. Ela será exigida de todos os usuários no próximo acesso.`;
@@ -490,5 +511,5 @@
     });
   }
 
-  window.Interno = { montar };
+  window.Interno = { montar, DOCS, carregarVigente };
 })();

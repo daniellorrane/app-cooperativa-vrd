@@ -103,17 +103,8 @@
     return data;
   }
 
-  // Termo de uso vigente (versão publicada mais recente).
-  async function carregarTermoAtual() {
-    const { data, error } = await sb
-      .from("termos_uso")
-      .select("versao, texto")
-      .order("publicado_em", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error || !data) return null;
-    return data;
-  }
+  // Documentos versionados (termos e privacidade) são definidos no módulo interno.
+  const { DOCS, carregarVigente } = window.Interno;
 
   // ---------- Telas ----------
 
@@ -323,34 +314,48 @@
     }).join("");
   }
 
-  // Aceite obrigatório da versão vigente dos termos (cadastro antigo ou nova versão publicada).
-  function telaAceiteTermos(perfil, termo) {
+  // Aceite obrigatório das versões vigentes que o usuário ainda não aceitou (cadastro antigo ou nova versão publicada).
+  function telaAceiteDocumentos(perfil, pendentes) {
     mostrarBotaoSair(true);
     app.innerHTML = `
-      <section class="cartao largo texto-legal">
-        ${textoDosTermos(termo.texto, "h2")}
-        <form id="form-aceite-termo" novalidate>
+      <section class="cartao largo">
+        <h1>Antes de continuar</h1>
+        <p class="ajuda">Leia os documentos abaixo e confirme o aceite de cada um para usar o sistema.</p>
+      </section>
+      ${pendentes.map(({ tipo, doc }) => `
+        <section class="cartao largo texto-legal">
+          ${textoDosTermos(doc.texto, "h2")}
           <label class="opcao">
-            <input type="checkbox" name="aceite" />
-            <span>Li e aceito os Termos e Condições de Uso</span>
+            <input type="checkbox" name="${tipo}" />
+            <span>Li e aceito a versão ${esc(doc.versao)} dos ${esc(DOCS[tipo].titulo)}</span>
           </label>
+        </section>`).join("")}
+      <section class="cartao largo">
+        <form id="form-aceite-documentos" novalidate>
           <p class="erro" role="alert" hidden></p>
-          <button type="submit" class="btn-primario">Continuar</button>
+          <button type="submit" class="btn-primario">Aceitar e continuar</button>
         </form>
       </section>`;
 
-    const form = document.getElementById("form-aceite-termo");
+    const form = document.getElementById("form-aceite-documentos");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       mostrarErro(form, "");
-      if (!form.aceite.checked) return mostrarErro(form, "Marque a opção para aceitar os termos.");
+      const faltando = pendentes.filter(({ tipo }) => !app.querySelector(`input[name="${tipo}"]`).checked);
+      if (faltando.length) {
+        return mostrarErro(form, "Marque o aceite de todos os documentos para continuar.");
+      }
+
+      const agora = new Date().toISOString();
+      const atualizacao = {};
+      pendentes.forEach(({ tipo, doc }) => {
+        atualizacao[DOCS[tipo].campoVersao] = doc.versao;
+        atualizacao[DOCS[tipo].campoAceite] = agora;
+      });
 
       const btn = form.querySelector("button");
       btn.disabled = true;
-      const { error } = await sb
-        .from("usuarios")
-        .update({ termo_versao: termo.versao, termo_aceito_em: new Date().toISOString() })
-        .eq("id", perfil.id);
+      const { error } = await sb.from("usuarios").update(atualizacao).eq("id", perfil.id);
       if (error) {
         btn.disabled = false;
         return mostrarErro(form, "Não foi possível registrar o aceite: " + error.message);
@@ -359,20 +364,20 @@
     });
   }
 
-  // Página pública dos termos (acessível sem login, pelo link do cadastro).
-  async function telaTermos() {
+  // Página pública de um documento (acessível sem login, pelos links do cadastro).
+  async function telaDocumento(tipo) {
     app.innerHTML = '<section class="cartao largo"><p class="ajuda">Carregando...</p></section>';
-    const termo = await carregarTermoAtual();
-    if (!termo) {
-      app.innerHTML = '<section class="cartao"><p class="erro">Não foi possível carregar os termos agora. Tente novamente em instantes.</p></section>';
+    const doc = await carregarVigente(tipo);
+    if (!doc) {
+      app.innerHTML = '<section class="cartao"><p class="erro">Não foi possível carregar o documento agora. Tente novamente em instantes.</p></section>';
       return;
     }
     app.innerHTML = `
       <section class="cartao largo texto-legal">
-        ${textoDosTermos(termo.texto)}
-        <p class="rodape-form"><a href="#" id="voltar-termos">Voltar</a></p>
+        ${textoDosTermos(doc.texto)}
+        <p class="rodape-form"><a href="#" id="voltar-documento">Voltar</a></p>
       </section>`;
-    document.getElementById("voltar-termos").addEventListener("click", (e) => {
+    document.getElementById("voltar-documento").addEventListener("click", (e) => {
       e.preventDefault();
       location.hash = "";
       rotear();
@@ -399,9 +404,9 @@
       form.cpf.value = formatarCpf(form.cpf.value);
     });
 
-    const termo = await carregarTermoAtual();
-    if (!termo) {
-      mostrarErro(form, "Não foi possível carregar os termos de uso. Tente novamente em instantes.");
+    const [termo, privacidade] = await Promise.all([carregarVigente("termos"), carregarVigente("privacidade")]);
+    if (!termo || !privacidade) {
+      mostrarErro(form, "Não foi possível carregar os termos e a política de privacidade. Tente novamente em instantes.");
       form.querySelector("button[type=submit]").disabled = true;
       return;
     }
@@ -423,7 +428,9 @@
       if (!cpfValido(dados.cpf)) return mostrarErro(form, "CPF inválido. Confira os números.");
       if (dados.senha.length < 8) return mostrarErro(form, "A senha precisa ter pelo menos 8 caracteres.");
       if (!telefoneValido(dados.telefone)) return mostrarErro(form, "Celular inválido. Use o formato +55(33)999058391.");
-      if (!form.aceite.checked) return mostrarErro(form, "Leia e aceite os Termos e Condições de Uso para continuar.");
+      if (!form.aceite_termos.checked || !form.aceite_privacidade.checked) {
+        return mostrarErro(form, "Leia e aceite os Termos e Condições de Uso e a Política de Privacidade para continuar.");
+      }
 
       const btn = form.querySelector("button");
       btn.disabled = true;
@@ -451,6 +458,8 @@
           tipo_acesso: dados.tipo,
           termo_versao: termo.versao,
           termo_aceito_em: new Date().toISOString(),
+          privacidade_versao: privacidade.versao,
+          privacidade_aceita_em: new Date().toISOString(),
         });
         if (erroPerfil) {
           if (erroPerfil.code === "23505") {
@@ -581,7 +590,8 @@
     try {
       if (modoRecuperacao) return telaRedefinir();
       const hash = location.hash.replace("#", "");
-      if (hash === "termos") return telaTermos();
+      if (hash === "termos") return telaDocumento("termos");
+      if (hash === "privacidade") return telaDocumento("privacidade");
       const { data: { session } } = await sb.auth.getSession();
 
       if (!session) {
@@ -594,10 +604,14 @@
       if (!perfil) return telaCadastro();
       if (perfil.status === "recusado" || perfil.status === "bloqueado") return telaRecusado(perfil);
 
-      // Termos valem para todo o sistema: quem não aceitou a versão vigente aceita antes de seguir.
-      const termo = await carregarTermoAtual();
-      if (!termo) throw new Error("Não foi possível carregar os termos de uso. Atualize a página.");
-      if (perfil.termo_versao !== termo.versao) return telaAceiteTermos(perfil, termo);
+      // Termos e política valem para todo o sistema: quem não aceitou a versão vigente aceita antes de seguir.
+      const pendentes = [];
+      for (const tipo of Object.keys(DOCS)) {
+        const doc = await carregarVigente(tipo);
+        if (!doc) throw new Error("Não foi possível carregar os termos de uso. Atualize a página.");
+        if (perfil[DOCS[tipo].campoVersao] !== doc.versao) pendentes.push({ tipo, doc });
+      }
+      if (pendentes.length) return telaAceiteDocumentos(perfil, pendentes);
 
       if (perfil.status === "pendente") return telaPendente();
       if (hash === "meus-dados") return telaMeusDados(perfil);
