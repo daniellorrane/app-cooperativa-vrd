@@ -278,6 +278,39 @@ form input:disabled { background: var(--fundo); color: var(--cinza); }
 .lista-respostas { list-style: none; margin: 8px 0 0; padding: 0; }
 .lista-respostas li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; padding: 10px 0; border-bottom: 1px solid var(--borda); }
 
+/* Carteirinha digital */
+.carteirinha {
+  max-width: 460px;
+  margin: 16px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--borda);
+  background: var(--branco);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+.carteirinha-topo { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 16px; background: var(--verde); color: var(--branco); }
+.carteirinha-topo span { font-size: 13px; opacity: 0.9; }
+.carteirinha-corpo { display: flex; gap: 16px; align-items: center; padding: 16px; }
+.carteirinha-dados { flex: 1; min-width: 0; }
+.carteirinha-dados p { margin: 4px 0; }
+.carteirinha-nome { font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.carteirinha-codigo { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; letter-spacing: 0.5px; color: var(--cinza); }
+.carteirinha-qr { flex: 0 0 auto; width: 128px; }
+.carteirinha-qr svg { width: 128px; height: 128px; display: block; }
+.validacao { max-width: 460px; }
+.validacao.valida h1 { color: var(--verde); }
+.validacao.invalida h1 { color: #a4262c; }
+.validacao-nome { font-size: 20px; font-weight: 700; margin: 8px 0; }
+
+/* Biblioteca e enquetes */
+.resultado-opcao { padding: 10px 0; border-bottom: 1px solid var(--borda); }
+.resultado-opcao.minha { font-weight: 600; }
+.resultado-linha { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.barra { height: 10px; border-radius: 999px; background: var(--fundo); overflow: hidden; }
+.barra span { display: block; height: 100%; background: var(--verde); border-radius: 999px; }
+.opcoes-enquete { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.opcoes-enquete .opcao { margin: 0; }
+
 /* Atendimentos: anexos, avaliação e prazo */
 .msg .anexos { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .anexo {

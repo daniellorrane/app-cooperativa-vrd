@@ -690,6 +690,8 @@
       const hash = location.hash.replace("#", "");
       if (hash === "termos") return telaDocumento("termos");
       if (hash === "privacidade") return telaDocumento("privacidade");
+      // Validação da carteirinha pelo QR code: pública, não exige login.
+      if (hash.startsWith("validar/")) return window.Carteirinha.validar(app, hash.slice(8));
       const { data: { session } } = await sb.auth.getSession();
 
       if (!session) {
