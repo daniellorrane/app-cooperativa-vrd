@@ -447,7 +447,7 @@
     lista.innerHTML = tipos.map((t) => `
       <label class="opcao">
         <input type="radio" name="tipo" value="${t.codigo}" />
-        <span>${t.descricao}</span>
+        <span>${escapar(t.descricao)}</span>
       </label>`).join("");
 
     form.telefone.addEventListener("input", () => {
