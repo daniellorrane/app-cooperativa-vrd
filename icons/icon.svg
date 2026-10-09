@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Cooperativa Vale do Rio Doce">
+  <rect width="96" height="96" rx="20" fill="#1f6b3a"/>
+  <path d="M48 20c-12 0-22 9-22 21 0 6 2.6 11.4 6.8 15.2L48 76l15.2-19.8C67.4 52.4 70 47 70 41c0-12-10-21-22-21z" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M48 32v22M40 46l8 8 8-8" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

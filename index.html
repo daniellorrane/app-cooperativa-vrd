@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f6b3a" />
+  <meta name="description" content="Acesso ao sistema da Cooperativa Agropecuária Vale do Rio Doce" />
+  <title>Cooperativa Vale do Rio Doce</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topo">
+    <div class="marca">
+      <img src="icons/icon.svg" alt="" width="36" height="36" />
+      <div>
+        <strong>Cooperativa Vale do Rio Doce</strong>
+        <span>Acesso ao sistema</span>
+      </div>
+    </div>
+    <button id="btn-sair" class="btn-ghost" hidden>Sair</button>
+  </header>
+
+  <main id="app" class="conteudo">
+    <p class="carregando" id="carregando">Carregando...</p>
+  </main>
+
+  <template id="tpl-login">
+    <section class="cartao">
+      <h1>Entrar</h1>
+      <form id="form-login" novalidate>
+        <label>E-mail
+          <input type="email" name="email" autocomplete="email" required />
+        </label>
+        <label>Senha
+          <input type="password" name="senha" autocomplete="current-password" required />
+        </label>
+        <p class="erro" role="alert" hidden></p>
+        <button type="submit" class="btn-primario">Entrar</button>
+      </form>
+      <p class="rodape-form">Ainda não tem acesso? <a href="#cadastro" id="ir-cadastro">Fazer cadastro</a></p>
+    </section>
+  </template>
+
+  <template id="tpl-cadastro">
+    <section class="cartao">
+      <h1>Primeiro acesso</h1>
+      <p class="ajuda">Escolha o seu tipo de acesso e preencha seus dados. O cadastro passa por aprovação antes de liberar o sistema.</p>
+      <form id="form-cadastro" novalidate>
+        <fieldset class="tipos">
+          <legend>Tipo de acesso</legend>
+          <div id="lista-tipos" class="opcoes"></div>
+        </fieldset>
+        <label>Nome completo
+          <input type="text" name="nome" autocomplete="name" required minlength="3" />
+        </label>
+        <label>CPF
+          <input type="text" name="cpf" inputmode="numeric" autocomplete="off" placeholder="000.000.000-00" required />
+        </label>
+        <label>E-mail
+          <input type="email" name="email" autocomplete="email" required />
+        </label>
+        <label>Senha <small>(mínimo de 8 caracteres)</small>
+          <input type="password" name="senha" autocomplete="new-password" required minlength="8" />
+        </label>
+        <label>Celular
+          <input type="tel" name="telefone" inputmode="tel" autocomplete="tel" placeholder="+55(33)999058391" required />
+        </label>
+        <p class="erro" role="alert" hidden></p>
+        <button type="submit" class="btn-primario">Solicitar acesso</button>
+      </form>
+      <p class="rodape-form">Já tem cadastro? <a href="#entrar">Entrar</a></p>
+    </section>
+  </template>
+
+  <template id="tpl-pendente">
+    <section class="cartao">
+      <h1>Cadastro em análise</h1>
+      <p>Recebemos o seu cadastro. Assim que um administrador aprovar o acesso, você poderá entrar no sistema.</p>
+      <button id="btn-atualizar" class="btn-primario">Verificar novamente</button>
+    </section>
+  </template>
+
+  <template id="tpl-recusado">
+    <section class="cartao">
+      <h1>Acesso não liberado</h1>
+      <p>Seu cadastro não foi aprovado.</p>
+      <p class="motivo" id="motivo-recusa"></p>
+    </section>
+  </template>
+
+  <template id="tpl-painel">
+    <section class="cartao largo">
+      <h1>Bem-vindo, <span id="nome-usuario"></span></h1>
+      <p class="ajuda">Tipo de acesso: <strong id="tipo-usuario"></strong></p>
+      <div id="area-admin" hidden>
+        <h2>Cadastros para aprovar</h2>
+        <div class="filtros">
+          <button class="chip ativo" data-filtro="pendente">Pendentes</button>
+          <button class="chip" data-filtro="aprovado">Aprovados</button>
+          <button class="chip" data-filtro="recusado">Recusados</button>
+        </div>
+        <div id="lista-cadastros"></div>
+      </div>
+    </section>
+  </template>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>

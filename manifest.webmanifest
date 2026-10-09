@@ -1,0 +1,15 @@
+{
+  "name": "Cooperativa Vale do Rio Doce",
+  "short_name": "Coop. VRD",
+  "description": "Acesso ao sistema da Cooperativa Agropecuária Vale do Rio Doce",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f7f6",
+  "theme_color": "#1f6b3a",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
