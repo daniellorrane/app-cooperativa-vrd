@@ -327,7 +327,7 @@
           ${textoDosTermos(doc.texto, "h2")}
           <label class="opcao">
             <input type="checkbox" name="${tipo}" />
-            <span>Li e aceito a versão ${esc(doc.versao)} dos ${esc(DOCS[tipo].titulo)}</span>
+            <span>Li e aceito a versão ${escapar(doc.versao)} dos ${escapar(DOCS[tipo].titulo)}</span>
           </label>
         </section>`).join("")}
       <section class="cartao largo">
