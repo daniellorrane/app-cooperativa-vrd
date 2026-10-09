@@ -178,6 +178,7 @@
       const senha = form.senha.value;
       if (senha.length < 8) return mostrarErro(form, "A senha precisa ter pelo menos 8 caracteres.");
       if (senha !== form.confirmacao.value) return mostrarErro(form, "As senhas não conferem.");
+      if (await senhaVazada(senha)) return mostrarErro(form, "Esta senha apareceu em vazamentos de dados. Escolha outra.");
 
       const btn = form.querySelector("button");
       btn.disabled = true;
@@ -217,6 +218,7 @@
       if (!atual) return mostrarErro(formSenha, "Informe a senha atual.");
       if (nova.length < 8) return mostrarErro(formSenha, "A nova senha precisa ter pelo menos 8 caracteres.");
       if (nova !== formSenha.confirmacao.value) return mostrarErro(formSenha, "As senhas não conferem.");
+      if (await senhaVazada(nova)) return mostrarErro(formSenha, "Esta senha apareceu em vazamentos de dados. Escolha outra.");
 
       const btn = formSenha.querySelector("button");
       btn.disabled = true;
@@ -479,6 +481,7 @@
       if (dados.nome.split(" ").length < 2) return mostrarErro(form, "Informe o nome completo.");
       if (!cpfValido(dados.cpf)) return mostrarErro(form, "CPF inválido. Confira os números.");
       if (dados.senha.length < 8) return mostrarErro(form, "A senha precisa ter pelo menos 8 caracteres.");
+      if (await senhaVazada(dados.senha)) return mostrarErro(form, "Esta senha apareceu em vazamentos de dados. Escolha outra.");
       if (!telefoneValido(dados.telefone)) return mostrarErro(form, "Celular inválido. Use o formato +55(33)999058391.");
       if (!form.aceite_termos.checked || !form.aceite_privacidade.checked) {
         return mostrarErro(form, "Leia e aceite os Termos e Condições de Uso e a Política de Privacidade para continuar.");
@@ -652,6 +655,24 @@
     const div = document.createElement("div");
     div.textContent = texto ?? "";
     return div.innerHTML;
+  }
+
+  // Senha vazada em bases públicas (Pwned Passwords, k-anonymity).
+  // Só os 5 primeiros caracteres do hash SHA-1 saem do aparelho. Se a consulta falhar, não bloqueia o cadastro.
+  async function senhaVazada(senha) {
+    try {
+      const hash = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(senha));
+      const hex = [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+      const resposta = await fetch(`https://api.pwnedpasswords.com/range/${hex.slice(0, 5)}`);
+      if (!resposta.ok) return false;
+      const sufixo = hex.slice(5);
+      return (await resposta.text()).split("\n").some((linha) => {
+        const [parte, contagem] = linha.trim().split(":");
+        return parte === sufixo && Number(contagem) > 0;
+      });
+    } catch (_) {
+      return false;
+    }
   }
 
   function traduzirErro(err) {
