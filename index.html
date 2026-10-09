@@ -40,7 +40,66 @@
         <p class="erro" role="alert" hidden></p>
         <button type="submit" class="btn-primario">Entrar</button>
       </form>
+      <p class="rodape-form"><a href="#esqueci" id="ir-esqueci">Esqueci minha senha</a></p>
       <p class="rodape-form">Ainda não tem acesso? <a href="#cadastro" id="ir-cadastro">Fazer cadastro</a></p>
+    </section>
+  </template>
+
+  <template id="tpl-esqueci">
+    <section class="cartao">
+      <h1>Recuperar senha</h1>
+      <p class="ajuda">Informe o e-mail do seu cadastro. Enviaremos um link para você criar uma nova senha.</p>
+      <form id="form-esqueci" novalidate>
+        <label>E-mail
+          <input type="email" name="email" autocomplete="email" required />
+        </label>
+        <p class="erro" role="alert" hidden></p>
+        <p class="sucesso" role="status" hidden></p>
+        <button type="submit" class="btn-primario">Enviar link</button>
+      </form>
+      <p class="rodape-form"><a href="#entrar">Voltar para entrar</a></p>
+    </section>
+  </template>
+
+  <template id="tpl-redefinir">
+    <section class="cartao">
+      <h1>Nova senha</h1>
+      <p class="ajuda">Escolha uma senha com pelo menos 8 caracteres.</p>
+      <form id="form-redefinir" novalidate>
+        <label>Nova senha
+          <input type="password" name="senha" autocomplete="new-password" required minlength="8" />
+        </label>
+        <label>Confirme a nova senha
+          <input type="password" name="confirmacao" autocomplete="new-password" required minlength="8" />
+        </label>
+        <p class="erro" role="alert" hidden></p>
+        <button type="submit" class="btn-primario">Salvar nova senha</button>
+      </form>
+    </section>
+  </template>
+
+  <template id="tpl-meus-dados">
+    <section class="cartao">
+      <h1>Meus dados</h1>
+      <p class="ajuda">Você pode alterar seu nome e celular. CPF, e-mail e tipo de acesso são controlados pela cooperativa.</p>
+      <form id="form-meus-dados" novalidate>
+        <label>Nome completo
+          <input type="text" name="nome" autocomplete="name" required minlength="3" />
+        </label>
+        <label>CPF
+          <input type="text" name="cpf" disabled />
+        </label>
+        <label>E-mail
+          <input type="email" name="email" disabled />
+        </label>
+        <label>Celular
+          <input type="tel" name="telefone" inputmode="tel" autocomplete="tel" required />
+        </label>
+        <p class="erro" role="alert" hidden></p>
+        <p class="sucesso" role="status" hidden></p>
+        <button type="submit" class="btn-primario">Salvar alterações</button>
+      </form>
+      <p class="rodape-form"><a href="#" id="voltar-painel">Voltar ao painel</a></p>
     </section>
   </template>
 
@@ -95,6 +154,9 @@
     <section class="cartao largo">
       <h1>Bem-vindo, <span id="nome-usuario"></span></h1>
       <p class="ajuda">Tipo de acesso: <strong id="tipo-usuario"></strong></p>
+      <div class="acoes">
+        <button id="btn-meus-dados" class="btn-ghost">Meus dados</button>
+      </div>
       <div id="area-admin" hidden>
         <h2>Cadastros para aprovar</h2>
         <div class="filtros">

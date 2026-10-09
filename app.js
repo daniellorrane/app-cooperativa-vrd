@@ -122,6 +122,100 @@
       e.preventDefault();
       location.hash = "cadastro";
     });
+    document.getElementById("ir-esqueci").addEventListener("click", (e) => {
+      e.preventDefault();
+      location.hash = "esqueci";
+    });
+  }
+
+  function telaEsqueci() {
+    mostrarBotaoSair(false);
+    renderizar("tpl-esqueci");
+    const form = document.getElementById("form-esqueci");
+    const sucesso = form.querySelector(".sucesso");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      mostrarErro(form, "");
+      sucesso.hidden = true;
+      const email = form.email.value.trim().toLowerCase();
+      if (!email) return mostrarErro(form, "Informe o e-mail do cadastro.");
+
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      const { error } = await sb.auth.resetPasswordForEmail(email, {
+        redirectTo: location.origin + location.pathname,
+      });
+      btn.disabled = false;
+      if (error) return mostrarErro(form, traduzirErro(error));
+      // Mensagem genérica: não revela se o e-mail existe no sistema.
+      sucesso.textContent = "Se este e-mail estiver cadastrado, você receberá o link em instantes.";
+      sucesso.hidden = false;
+    });
+  }
+
+  function telaRedefinir() {
+    mostrarBotaoSair(false);
+    renderizar("tpl-redefinir");
+    const form = document.getElementById("form-redefinir");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      mostrarErro(form, "");
+      const senha = form.senha.value;
+      if (senha.length < 8) return mostrarErro(form, "A senha precisa ter pelo menos 8 caracteres.");
+      if (senha !== form.confirmacao.value) return mostrarErro(form, "As senhas não conferem.");
+
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      const { error } = await sb.auth.updateUser({ password: senha });
+      btn.disabled = false;
+      if (error) return mostrarErro(form, traduzirErro(error));
+      location.hash = "";
+      rotear();
+    });
+  }
+
+  function telaMeusDados(perfil) {
+    mostrarBotaoSair(true);
+    renderizar("tpl-meus-dados");
+    const form = document.getElementById("form-meus-dados");
+    const sucesso = form.querySelector(".sucesso");
+    form.nome.value = perfil.nome_completo;
+    form.cpf.value = formatarCpf(perfil.cpf);
+    form.email.value = perfil.email;
+    form.telefone.value = formatarTelefone(perfil.telefone);
+
+    form.telefone.addEventListener("input", () => {
+      form.telefone.value = formatarTelefone(form.telefone.value);
+    });
+
+    document.getElementById("voltar-painel").addEventListener("click", (e) => {
+      e.preventDefault();
+      location.hash = "";
+      rotear();
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      mostrarErro(form, "");
+      sucesso.hidden = true;
+      const nome = form.nome.value.trim().replace(/\s+/g, " ");
+      const telefone = telefoneParaBanco(form.telefone.value);
+
+      if (nome.split(" ").length < 2) return mostrarErro(form, "Informe o nome completo.");
+      if (!telefoneValido(telefone)) return mostrarErro(form, "Celular inválido. Use o formato +55(33)999058391.");
+
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      const { error } = await sb
+        .from("usuarios")
+        .update({ nome_completo: nome, telefone })
+        .eq("id", perfil.id);
+      btn.disabled = false;
+      if (error) return mostrarErro(form, "Não foi possível salvar: " + error.message);
+
+      sucesso.textContent = "Dados atualizados.";
+      sucesso.hidden = false;
+    });
   }
 
   async function telaCadastro() {
@@ -219,6 +313,9 @@
     renderizar("tpl-painel");
     document.getElementById("nome-usuario").textContent = perfil.nome_completo.split(" ")[0];
     document.getElementById("tipo-usuario").textContent = perfil.tipo_acesso.replace("_", " ");
+    document.getElementById("btn-meus-dados").addEventListener("click", () => {
+      location.hash = "meus-dados";
+    });
 
     if (perfil.tipo_acesso === "administrador") {
       document.getElementById("area-admin").hidden = false;
@@ -310,11 +407,14 @@
 
   async function rotear() {
     try {
+      // Link de recuperação de senha chega com type=recovery no endereço.
+      if (location.hash.includes("type=recovery")) return telaRedefinir();
       const hash = location.hash.replace("#", "");
       const { data: { session } } = await sb.auth.getSession();
 
       if (!session) {
         if (hash === "cadastro") return telaCadastro();
+        if (hash === "esqueci") return telaEsqueci();
         return telaLogin();
       }
 
@@ -322,6 +422,7 @@
       if (!perfil) return telaCadastro();
       if (perfil.status === "pendente") return telaPendente();
       if (perfil.status === "recusado" || perfil.status === "bloqueado") return telaRecusado(perfil);
+      if (hash === "meus-dados") return telaMeusDados(perfil);
       return telaPainel(perfil);
     } catch (err) {
       app.innerHTML = `<section class="cartao"><p class="erro">Erro ao carregar: ${escapar(err.message)}</p></section>`;
@@ -336,6 +437,8 @@
 
   window.addEventListener("hashchange", rotear);
   sb.auth.onAuthStateChange((evento) => {
+    // Clique no link do e-mail de recuperação: mostra o formulário de nova senha.
+    if (evento === "PASSWORD_RECOVERY") return telaRedefinir();
     if (evento === "SIGNED_OUT") rotear();
   });
 

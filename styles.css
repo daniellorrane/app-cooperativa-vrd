@@ -198,6 +198,8 @@ fieldset legend {
 .acoes button { min-height: 40px; }
 
 .erro { color: var(--terra); font-size: 14px; margin: 0; font-weight: 600; }
+.sucesso { color: var(--verde); font-size: 14px; margin: 0; font-weight: 600; }
+form input:disabled { background: var(--fundo); color: var(--cinza); }
 .motivo { background: var(--verde-claro); padding: 12px; border-radius: 10px; }
 
 .rodape-form { margin-top: 20px; font-size: 14px; color: var(--cinza); }
