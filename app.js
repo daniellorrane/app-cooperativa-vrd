@@ -73,9 +73,9 @@
     p.hidden = !mensagem;
   }
 
-  function renderizar(id) {
+  function renderizar(id, destino = app) {
     const tpl = document.getElementById(id);
-    app.replaceChildren(tpl.content.cloneNode(true));
+    destino.replaceChildren(tpl.content.cloneNode(true));
     carregando.remove?.();
   }
 
@@ -192,10 +192,10 @@
     });
   }
 
-  function telaMeusDados(perfil) {
+  function telaMeusDados(perfil, destino = app) {
     mostrarBotaoSair(true);
-    renderizar("tpl-meus-dados");
-    const form = document.getElementById("form-meus-dados");
+    renderizar("tpl-meus-dados", destino);
+    const form = destino.querySelector("#form-meus-dados");
     const sucesso = form.querySelector(".sucesso");
     form.nome.value = perfil.nome_completo;
     form.cpf.value = formatarCpf(perfil.cpf);
@@ -204,12 +204,6 @@
 
     form.telefone.addEventListener("input", () => {
       form.telefone.value = formatarTelefone(form.telefone.value);
-    });
-
-    document.getElementById("voltar-painel").addEventListener("click", (e) => {
-      e.preventDefault();
-      location.hash = "";
-      rotear();
     });
 
     const formSenha = document.getElementById("form-alterar-senha");
@@ -490,27 +484,33 @@
       perfil.motivo_recusa || "Entre em contato com a cooperativa para mais informações.";
   }
 
-  async function telaPainel(perfil) {
+  // Painel com menu lateral. A navegação é pelo endereço (#conversas, #meus-dados etc.).
+  function telaPainel(perfil, hash) {
     mostrarBotaoSair(true);
-    renderizar("tpl-painel");
-    document.getElementById("nome-usuario").textContent = perfil.nome_completo.split(" ")[0];
-    document.getElementById("tipo-usuario").textContent = perfil.tipo_acesso.replace("_", " ");
-    document.getElementById("btn-meus-dados").addEventListener("click", () => {
-      location.hash = "meus-dados";
+    window.Interno.abrirPainel(perfil, app, hash, {
+      "meus-dados": (destino) => telaMeusDados(perfil, destino),
+      "admin/cadastros": (destino) => telaCadastros(destino),
     });
-    window.Interno.montar(perfil, document.getElementById("area-interna"));
+  }
 
-    if (perfil.tipo_acesso === "administrador") {
-      document.getElementById("area-admin").hidden = false;
-      carregarCadastros("pendente");
-      document.querySelectorAll(".chip").forEach((chip) => {
-        chip.addEventListener("click", () => {
-          document.querySelectorAll(".chip").forEach((c) => c.classList.remove("ativo"));
-          chip.classList.add("ativo");
-          carregarCadastros(chip.dataset.filtro);
-        });
+  // Aprovação de cadastros (somente administrador).
+  function telaCadastros(destino) {
+    destino.innerHTML = `
+      <h1>Aprovar cadastros</h1>
+      <p class="ajuda">Confira os dados antes de aprovar. Quem for recusado pode ver o motivo informado.</p>
+      <div class="filtros">
+        <button class="chip ativo" data-filtro="pendente">Pendentes</button>
+        <button class="chip" data-filtro="aprovado">Aprovados</button>
+        <button class="chip" data-filtro="recusado">Recusados</button>
+      </div>
+      <div id="lista-cadastros"></div>`;
+    destino.querySelectorAll(".chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        destino.querySelectorAll(".chip").forEach((c) => c.classList.toggle("ativo", c === chip));
+        carregarCadastros(chip.dataset.filtro);
       });
-    }
+    });
+    carregarCadastros("pendente");
   }
 
   async function carregarCadastros(status) {
@@ -589,6 +589,7 @@
   }
 
   async function rotear() {
+    app.className = "conteudo"; // o painel troca para a versão larga
     try {
       if (modoRecuperacao) return telaRedefinir();
       const hash = location.hash.replace("#", "");
@@ -616,8 +617,7 @@
       if (pendentes.length) return telaAceiteDocumentos(perfil, pendentes);
 
       if (perfil.status === "pendente") return telaPendente();
-      if (hash === "meus-dados") return telaMeusDados(perfil);
-      return telaPainel(perfil);
+      return telaPainel(perfil, hash);
     } catch (err) {
       app.innerHTML = `<section class="cartao"><p class="erro">Erro ao carregar: ${escapar(err.message)}</p></section>`;
     }

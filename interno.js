@@ -1,9 +1,9 @@
-// Comunicação interna: conversas por área, solicitações, notificações e política de privacidade.
-// Todas as regras de acesso são aplicadas pelo banco (RLS). Esta tela apenas apresenta os dados.
+// Painel interno: menu, início, conversas por área, solicitações, notificações e administração.
+// Regras de acesso são aplicadas pelo banco (RLS). Esta camada apenas organiza a tela.
 (() => {
   const sb = () => window.sb;
-  let uid = null;
-  let perfilAtual = null;
+  const alvo = () => document.getElementById("conteudo-interno");
+  let perfil = null;
   let canalMensagens = null;
   let canalNotificacoes = null;
 
@@ -26,28 +26,38 @@
       titulo: "Termos e Condições de Uso",
       campoVersao: "termo_versao",
       campoAceite: "termo_aceito_em",
-      rota: "termos",
     },
     privacidade: {
       tabela: "politicas_privacidade",
       titulo: "Política de Privacidade",
       campoVersao: "privacidade_versao",
       campoAceite: "privacidade_aceita_em",
-      rota: "privacidade",
     },
   };
 
-  // Versão vigente de um documento (a publicada mais recente). Retorna null se não for possível ler.
-  async function carregarVigente(tipo) {
-    const { data, error } = await sb()
-      .from(DOCS[tipo].tabela)
-      .select("versao, texto, publicado_em")
-      .order("publicado_em", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error || !data) return null;
-    return data;
-  }
+  // Menu do painel. "rota" é o trecho após o # do endereço.
+  const MENU = [
+    { grupo: "Principal", rota: "inicio", titulo: "Início", icone: "home" },
+    { grupo: "Principal", rota: "conversas", titulo: "Conversas", icone: "chat" },
+    { grupo: "Principal", rota: "nova", titulo: "Nova solicitação", icone: "plus" },
+    { grupo: "Principal", rota: "notificacoes", titulo: "Notificações", icone: "bell", badge: true },
+    { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
+    { grupo: "Administração", rota: "admin/cadastros", titulo: "Aprovar cadastros", icone: "check", admin: true },
+    { grupo: "Administração", rota: "admin/areas", titulo: "Áreas e funcionários", icone: "map", admin: true },
+    { grupo: "Administração", rota: "admin/documentos", titulo: "Termos e privacidade", icone: "doc", admin: true },
+  ];
+
+  const ICONES = {
+    home: "M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
+    chat: "M4 5h16v11H8l-4 4z",
+    plus: "M12 5v14M5 12h14",
+    bell: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4zM10 20h4",
+    user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0",
+    check: "M5 12l5 5 9-10",
+    map: "M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z",
+    doc: "M7 3h7l5 5v13H7z",
+  };
+  const icone = (nome) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONES[nome]}"/></svg>`;
 
   function esc(texto) {
     const d = document.createElement("div");
@@ -59,10 +69,6 @@
     return new Date(valor).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
   }
 
-  function alvo() {
-    return document.getElementById("conteudo-interno");
-  }
-
   function sairDaConversa() {
     if (canalMensagens) {
       sb().removeChannel(canalMensagens);
@@ -70,47 +76,58 @@
     }
   }
 
-  function ir(visao, extra) {
+  // ---------- Casca do painel ----------
+
+  // Monta o menu e a área de conteúdo. "extras" traz as telas que vivem em app.js (Meus dados, aprovação de cadastros).
+  async function abrirPainel(usuario, raiz, hash, extras = {}) {
+    perfil = usuario;
     sairDaConversa();
-    if (visao === "inicio") return telaConversas();
-    if (visao === "nova") return telaNova();
-    if (visao === "notif") return telaNotificacoes();
-    if (visao === "privacidade") return telaPrivacidade();
-    if (visao === "areas") return telaAreas();
-    if (visao === "termos-admin") return telaPublicarDocumento("termos");
-    if (visao === "privacidade-admin") return telaPublicarDocumento("privacidade");
-    if (visao === "conversa") return telaConversa(extra);
-  }
 
-  // ---------- Entrada ----------
+    const admin = perfil.tipo_acesso === "administrador";
+    const caminho = (hash || "inicio").split("/");
+    const chave = caminho[0] === "admin" ? caminho.join("/") : caminho[0];
+    const ativo = caminho[0] === "conversa" ? "conversas" : chave;
 
-  async function montar(perfil, raiz) {
-    perfilAtual = perfil;
-    uid = perfil.id;
+    const itens = MENU.filter((i) => !i.admin || admin);
+    const grupos = [...new Set(itens.map((i) => i.grupo))];
 
+    raiz.className = "conteudo painel";
     raiz.innerHTML = `
-      <nav class="nav-interna" aria-label="Comunicação interna">
-        <button data-visao="inicio" class="chip ativo">Conversas</button>
-        <button data-visao="nova" class="chip">Nova solicitação</button>
-        <button data-visao="notif" class="chip">Notificações <span id="contador-notif" class="badge" hidden>0</span></button>
-        <button data-visao="privacidade" class="chip">Privacidade</button>
-        ${perfil.tipo_acesso === "administrador" ? '<button data-visao="areas" class="chip">Áreas e funcionários</button>' : ""}
-        ${perfil.tipo_acesso === "administrador" ? '<button data-visao="termos-admin" class="chip">Publicar termos de uso</button>' : ""}
-        ${perfil.tipo_acesso === "administrador" ? '<button data-visao="privacidade-admin" class="chip">Publicar política de privacidade</button>' : ""}
-      </nav>
-      <div id="conteudo-interno"></div>`;
-
-    raiz.querySelectorAll("[data-visao]").forEach((botao) => {
-      botao.addEventListener("click", () => {
-        raiz.querySelectorAll("[data-visao]").forEach((b) => b.classList.remove("ativo"));
-        botao.classList.add("ativo");
-        ir(botao.dataset.visao);
-      });
-    });
+      <div class="casca">
+        <aside class="menu-lateral">
+          <div class="usuario">
+            <strong>${esc(perfil.nome_completo.split(" ")[0])}</strong>
+            <span>${esc(perfil.tipo_acesso.replace("_", " "))}</span>
+          </div>
+          <nav aria-label="Menu principal">
+            ${grupos.map((grupo) => `
+              <p class="grupo-menu">${esc(grupo)}</p>
+              ${itens.filter((i) => i.grupo === grupo).map((i) => `
+                <a href="#${i.rota}" class="item-menu ${i.rota === ativo ? "ativo" : ""}"${i.rota === ativo ? ' aria-current="page"' : ""}>
+                  ${icone(i.icone)}
+                  <span>${esc(i.titulo)}</span>
+                  ${i.badge ? '<span id="contador-notif" class="badge" hidden>0</span>' : ""}
+                </a>`).join("")}`).join("")}
+          </nav>
+        </aside>
+        <section id="conteudo-interno" class="conteudo-interno" aria-live="polite"></section>
+      </div>`;
 
     assinarNotificacoes();
     atualizarContador();
-    ir("inicio");
+
+    const telas = {
+      inicio: telaInicio,
+      conversas: telaConversas,
+      conversa: () => telaConversa(caminho[1]),
+      nova: telaNova,
+      notificacoes: telaNotificacoes,
+      "meus-dados": () => extras["meus-dados"]?.(alvo()),
+      "admin/cadastros": () => (admin ? extras["admin/cadastros"]?.(alvo()) : telaInicio()),
+      "admin/areas": () => (admin ? telaAreas() : telaInicio()),
+      "admin/documentos": () => (admin ? telaDocumentos() : telaInicio()),
+    };
+    return (telas[chave] || telaInicio)();
   }
 
   // ---------- Notificações ----------
@@ -129,10 +146,10 @@
   function assinarNotificacoes() {
     if (canalNotificacoes) sb().removeChannel(canalNotificacoes);
     canalNotificacoes = sb()
-      .channel("notif-" + uid)
+      .channel("notif-" + perfil.id)
       .on("postgres_changes", {
         event: "INSERT", schema: "public", table: "notificacoes",
-        filter: "usuario_id=eq." + uid,
+        filter: "usuario_id=eq." + perfil.id,
       }, () => atualizarContador())
       .subscribe();
   }
@@ -147,6 +164,7 @@
     if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
 
     alvo().innerHTML = `
+      <h1>Notificações</h1>
       <div class="acoes">
         <button id="marcar-todas" class="btn-ghost">Marcar todas como lidas</button>
       </div>
@@ -162,7 +180,7 @@
       el.addEventListener("click", async () => {
         await sb().from("notificacoes").update({ lida: true }).eq("id", el.dataset.id);
         atualizarContador();
-        if (el.dataset.conversa) ir("conversa", el.dataset.conversa);
+        if (el.dataset.conversa) location.hash = "conversa/" + el.dataset.conversa;
         else telaNotificacoes();
       });
     });
@@ -174,7 +192,35 @@
     });
   }
 
-  // ---------- Conversas ----------
+  // ---------- Início ----------
+
+  async function telaInicio() {
+    alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
+    const [{ count: naoLidas }, { data: abertas }] = await Promise.all([
+      sb().from("notificacoes").select("id", { count: "exact", head: true }).eq("lida", false),
+      sb().from("conversas").select("id").in("status", ["aberta", "em_andamento"]),
+    ]);
+    const primeiroNome = perfil.nome_completo.split(" ")[0];
+
+    alvo().innerHTML = `
+      <h1>Olá, ${esc(primeiroNome)}</h1>
+      <p class="ajuda">Acompanhe suas solicitações e notificações por aqui.</p>
+      <div class="indicadores">
+        <a class="indicador" href="#notificacoes">
+          <strong>${naoLidas || 0}</strong>
+          <span>Notificações não lidas</span>
+        </a>
+        <a class="indicador" href="#conversas">
+          <strong>${abertas?.length || 0}</strong>
+          <span>Solicitações em aberto</span>
+        </a>
+      </div>
+      <div class="acoes">
+        <a href="#nova" class="btn-primario">Nova solicitação</a>
+      </div>`;
+  }
+
+  // ---------- Conversas e solicitações ----------
 
   async function telaConversas() {
     alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
@@ -184,30 +230,54 @@
       .order("atualizado_em", { ascending: false });
     if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
 
-    if (!data.length) {
-      alvo().innerHTML = '<p class="ajuda">Nenhuma conversa ainda. Use "Nova solicitação" para começar.</p>';
-      return;
+    const filtros = [["todas", "Todas"], ["aberta", "Abertas"], ["em_andamento", "Em andamento"], ["concluida", "Concluídas"]];
+    let filtroAtivo = "todas";
+
+    alvo().innerHTML = `
+      <h1>Conversas</h1>
+      <p class="ajuda">Solicitações enviadas por você e, para funcionários, as da sua área.</p>
+      <div class="filtros">
+        ${filtros.map(([valor, rotulo]) => `<button class="chip ${valor === filtroAtivo ? "ativo" : ""}" data-filtro="${valor}">${rotulo}</button>`).join("")}
+      </div>
+      <div id="lista-conversas" class="lista"></div>`;
+
+    const lista = document.getElementById("lista-conversas");
+    function desenhar() {
+      if (!data.length) {
+        lista.innerHTML = '<p class="ajuda">Nenhuma conversa ainda. Use "Nova solicitação" para começar.</p>';
+        return;
+      }
+      const visiveis = data.filter((c) => filtroAtivo === "todas" || c.status === filtroAtivo);
+      lista.innerHTML = visiveis.length ? visiveis.map((c) => `
+        <article class="item clicavel" data-id="${c.id}">
+          <div>
+            <strong>${esc(c.assunto)}</strong>
+            <span class="etiqueta">${c.solicitante_id === perfil.id ? "Minha" : "Recebida"}</span>
+          </div>
+          <p class="ajuda">${esc(TIPOS[c.tipo])} · ${esc(c.areas?.nome)} · ${STATUS[c.status]} · ${dataCurta(c.atualizado_em)}</p>
+        </article>`).join("") : '<p class="ajuda">Nenhuma solicitação nesta situação.</p>';
+
+      lista.querySelectorAll("[data-id]").forEach((el) => {
+        el.addEventListener("click", () => { location.hash = "conversa/" + el.dataset.id; });
+      });
     }
 
-    alvo().innerHTML = `<div class="lista">${data.map((c) => `
-      <article class="item clicavel" data-id="${c.id}">
-        <div>
-          <strong>${esc(c.assunto)}</strong>
-          <span class="etiqueta">${c.solicitante_id === uid ? "Minha" : "Recebida"}</span>
-        </div>
-        <p class="ajuda">${esc(TIPOS[c.tipo])} · ${esc(c.areas?.nome)} · ${STATUS[c.status]} · ${dataCurta(c.atualizado_em)}</p>
-      </article>`).join("")}</div>`;
-
-    alvo().querySelectorAll("[data-id]").forEach((el) => {
-      el.addEventListener("click", () => ir("conversa", el.dataset.id));
+    alvo().querySelectorAll("[data-filtro]").forEach((botao) => {
+      botao.addEventListener("click", () => {
+        filtroAtivo = botao.dataset.filtro;
+        alvo().querySelectorAll("[data-filtro]").forEach((b) => b.classList.toggle("ativo", b === botao));
+        desenhar();
+      });
     });
+    desenhar();
   }
 
   async function telaNova() {
     const { data: areas } = await sb().from("areas").select("id, nome").eq("ativa", true).order("nome");
     alvo().innerHTML = `
       <section class="cartao">
-        <h2>Nova solicitação</h2>
+        <h1>Nova solicitação</h1>
+        <p class="ajuda">Escolha a área, o tipo e descreva o que precisa. A equipe responde por aqui.</p>
         <form id="form-nova" novalidate>
           <label>Área
             <select name="area" required>
@@ -248,7 +318,7 @@
       botao.disabled = true;
       const { data: conversa, error } = await sb()
         .from("conversas")
-        .insert({ area_id: form.area.value, tipo: form.tipo.value, assunto, solicitante_id: uid })
+        .insert({ area_id: form.area.value, tipo: form.tipo.value, assunto, solicitante_id: perfil.id })
         .select("id")
         .single();
       if (error) {
@@ -259,14 +329,14 @@
       }
       const { error: erroMsg } = await sb()
         .from("mensagens")
-        .insert({ conversa_id: conversa.id, autor_id: uid, texto });
+        .insert({ conversa_id: conversa.id, autor_id: perfil.id, texto });
       if (erroMsg) {
         erro.textContent = "Solicitação criada, mas a mensagem não foi enviada: " + erroMsg.message;
         erro.hidden = false;
         botao.disabled = false;
         return;
       }
-      ir("conversa", conversa.id);
+      location.hash = "conversa/" + conversa.id;
     });
   }
 
@@ -279,13 +349,13 @@
       .single();
     if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
 
-    const souSolicitante = conversa.solicitante_id === uid;
+    const souSolicitante = conversa.solicitante_id === perfil.id;
     const nomeArea = conversa.areas?.nome || "Atendimento";
 
     alvo().innerHTML = `
       <section class="cartao">
-        <button id="voltar" class="btn-ghost">Voltar às conversas</button>
-        <h2>${esc(conversa.assunto)}</h2>
+        <a href="#conversas" class="btn-ghost">Voltar às conversas</a>
+        <h1 class="titulo-conversa">${esc(conversa.assunto)}</h1>
         <p class="ajuda">${esc(TIPOS[conversa.tipo])} · ${esc(nomeArea)}</p>
         ${souSolicitante ? "" : `
           <label>Status
@@ -300,8 +370,6 @@
         </form>
         <p class="erro" role="alert" hidden></p>
       </section>`;
-
-    document.getElementById("voltar").addEventListener("click", () => ir("inicio"));
 
     const selectStatus = document.getElementById("status");
     if (selectStatus) {
@@ -320,7 +388,7 @@
     function adicionar(msg) {
       if (exibidas.has(msg.id)) return;
       exibidas.add(msg.id);
-      const eu = msg.autor_id === uid;
+      const eu = msg.autor_id === perfil.id;
       const cooperado = msg.autor_id !== null && msg.autor_id === conversa.solicitante_id;
       // Autor nulo: conta excluída com histórico mantido de forma anônima.
       const autor = msg.autor_id === null ? "Usuário removido"
@@ -358,7 +426,7 @@
       if (!texto) return;
       const { data: nova, error: erroEnvio } = await sb()
         .from("mensagens")
-        .insert({ conversa_id: id, autor_id: uid, texto })
+        .insert({ conversa_id: id, autor_id: perfil.id, texto })
         .select("id, texto, autor_id, criado_em")
         .single();
       if (erroEnvio) {
@@ -371,25 +439,7 @@
     });
   }
 
-  // ---------- Privacidade (LGPD) ----------
-
-  async function telaPrivacidade() {
-    alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
-    const documentos = await Promise.all(Object.keys(DOCS).map(async (tipo) => ({ tipo, doc: await carregarVigente(tipo) })));
-
-    alvo().innerHTML = documentos.map(({ tipo, doc }) => `
-      <section class="cartao texto-legal">
-        <h2>${esc(DOCS[tipo].titulo)}</h2>
-        ${doc
-          ? `<p class="ajuda">Versão ${esc(doc.versao)}. ${perfilAtual[DOCS[tipo].campoVersao] === doc.versao
-              ? "Você aceitou esta versão."
-              : "Aceite pendente."}</p>
-             <div class="texto-puro">${esc(doc.texto)}</div>`
-          : '<p class="erro">Não foi possível carregar este documento agora.</p>'}
-      </section>`).join("");
-  }
-
-  // ---------- Áreas e funcionários (administrador) ----------
+  // ---------- Administração ----------
 
   async function telaAreas() {
     alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
@@ -399,14 +449,20 @@
       sb().from("funcionarios_areas").select("usuario_id, area_id"),
     ]);
 
+    alvo().innerHTML = `
+      <h1>Áreas e funcionários</h1>
+      <p class="ajuda">Marque em quais áreas cada funcionário atua. Ele verá somente as solicitações dessas áreas.</p>
+      <div id="lista-vinculos"></div>
+      <p class="erro" hidden></p>`;
+
     if (!funcionarios.length) {
-      alvo().innerHTML = '<p class="ajuda">Ainda não há funcionários aprovados para vincular às áreas.</p>';
+      document.getElementById("lista-vinculos").innerHTML = '<p class="ajuda">Ainda não há funcionários aprovados para vincular às áreas.</p>';
       return;
     }
 
     const vinculado = (usuario, area) => vinculos.some((v) => v.usuario_id === usuario && v.area_id === area);
 
-    alvo().innerHTML = `<div class="lista">${funcionarios.map((f) => `
+    document.getElementById("lista-vinculos").innerHTML = `<div class="lista">${funcionarios.map((f) => `
       <article class="item">
         <strong>${esc(f.nome_completo)}</strong>
         <div class="opcoes-areas">
@@ -416,8 +472,7 @@
               <span>${esc(a.nome)}</span>
             </label>`).join("")}
         </div>
-      </article>`).join("")}</div>
-      <p class="erro" hidden></p>`;
+      </article>`).join("")}</div>`;
 
     alvo().querySelectorAll("input[type=checkbox]").forEach((caixa) => {
       caixa.addEventListener("change", async () => {
@@ -434,7 +489,21 @@
     });
   }
 
-  // ---------- Termos de uso (administrador) ----------
+  // Termos e política: escolhe o documento e publica nova versão.
+  function telaDocumentos(tipo = "termos") {
+    alvo().innerHTML = `
+      <h1>Termos e privacidade</h1>
+      <p class="ajuda">Ao publicar uma nova versão, todos os usuários, novos e já cadastrados, precisam aceitá-la para continuar usando o sistema.</p>
+      <div class="filtros">
+        <button class="chip ${tipo === "termos" ? "ativo" : ""}" data-doc="termos">Termos de uso</button>
+        <button class="chip ${tipo === "privacidade" ? "ativo" : ""}" data-doc="privacidade">Política de privacidade</button>
+      </div>
+      <div id="publicar-doc"></div>`;
+    alvo().querySelectorAll("[data-doc]").forEach((botao) => {
+      botao.addEventListener("click", () => telaDocumentos(botao.dataset.doc));
+    });
+    return telaPublicarDocumento(tipo, document.getElementById("publicar-doc"));
+  }
 
   // Sugere o próximo número: 1.0 vira 1.1.
   function proximaVersao(versao) {
@@ -443,26 +512,37 @@
     return Number.isInteger(ultimo) ? [...partes, ultimo + 1].join(".") : "";
   }
 
-  async function telaPublicarDocumento(tipo) {
+  // Versão vigente de um documento (a publicada mais recente). Retorna null se não for possível ler.
+  async function carregarVigente(tipo) {
+    const { data, error } = await sb()
+      .from(DOCS[tipo].tabela)
+      .select("versao, texto, publicado_em")
+      .order("publicado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data;
+  }
+
+  async function telaPublicarDocumento(tipo, destino) {
     const doc = DOCS[tipo];
-    alvo().innerHTML = '<p class="ajuda">Carregando...</p>';
+    destino.innerHTML = '<p class="ajuda">Carregando...</p>';
     const { data: versoes, error } = await sb()
       .from(doc.tabela)
       .select("versao, texto, publicado_em")
       .order("publicado_em", { ascending: false });
-    if (error) return (alvo().innerHTML = `<p class="erro">${esc(error.message)}</p>`);
+    if (error) return (destino.innerHTML = `<p class="erro">${esc(error.message)}</p>`);
 
     const atual = versoes[0];
-    alvo().innerHTML = `
+    destino.innerHTML = `
       <section class="cartao">
-        <h2>Publicar nova versão: ${esc(doc.titulo)}</h2>
-        <p class="ajuda">Ao publicar, todos os usuários, novos e já cadastrados, precisarão ler e aceitar a nova versão para continuar usando o sistema. Versões publicadas não podem ser alteradas nem apagadas.</p>
-        <p class="ajuda">O texto inicia com a versão atual para você editar uma cópia. O primeiro bloco é o título; os títulos das cláusulas começam com número, como "2. Cadastro". Separe os blocos com uma linha em branco.</p>
+        <h2>Nova versão: ${esc(doc.titulo)}</h2>
+        <p class="ajuda">O texto inicia com a versão atual para você editar uma cópia. O primeiro bloco é o título; as cláusulas começam com número, como "2. Cadastro". Separe os blocos com uma linha em branco. Versões publicadas não podem ser alteradas nem apagadas.</p>
         <form id="form-termo" novalidate>
           <label>Número da versão <small>(ex.: 1.1)</small>
             <input type="text" name="versao" maxlength="20" value="${esc(atual ? proximaVersao(atual.versao) : "1.0")}" required />
           </label>
-          <label>Texto dos termos
+          <label>Texto
             <textarea name="texto" rows="18" maxlength="50000" required>${esc(atual ? atual.texto : "")}</textarea>
           </label>
           <p class="erro" role="alert" hidden></p>
@@ -481,19 +561,18 @@
 
     const form = document.getElementById("form-termo");
     const erro = form.querySelector(".erro");
-    const sucesso = form.querySelector(".sucesso");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       erro.hidden = true;
-      sucesso.hidden = true;
+      destino.querySelector(".sucesso").hidden = true;
       const versao = form.versao.value.trim();
       const texto = form.texto.value.trim();
 
       const mostrarErro = (msg) => { erro.textContent = msg; erro.hidden = false; };
       if (!/^[\w.-]{1,20}$/.test(versao)) return mostrarErro("Número de versão inválido. Use letras, números, ponto ou hífen.");
       if (versoes.some((v) => v.versao === versao)) return mostrarErro("Esta versão já existe. Escolha outro número.");
-      if (texto.length < 200) return mostrarErro("O texto parece curto demais para ser os termos completos.");
-      if (!confirm(`Publicar a versão ${versao}? Todos os usuários precisarão aceitá-la.`)) return;
+      if (texto.length < 200) return mostrarErro("O texto parece curto demais para ser o documento completo.");
+      if (!confirm(`Publicar a versão ${versao} de ${doc.titulo}? Todos os usuários precisarão aceitá-la.`)) return;
 
       const botao = form.querySelector("button");
       botao.disabled = true;
@@ -502,14 +581,12 @@
         botao.disabled = false;
         return mostrarErro("Não foi possível publicar: " + erroPublicar.message);
       }
-      await telaPublicarDocumento(tipo);
-      const aviso = alvo().querySelector(".sucesso");
-      if (aviso) {
-        aviso.textContent = `Versão ${versao} publicada. Ela será exigida de todos os usuários no próximo acesso.`;
-        aviso.hidden = false;
-      }
+      await telaPublicarDocumento(tipo, destino);
+      const aviso = destino.querySelector(".sucesso");
+      aviso.textContent = `Versão ${versao} publicada. Ela será exigida de todos os usuários no próximo acesso.`;
+      aviso.hidden = false;
     });
   }
 
-  window.Interno = { montar, DOCS, carregarVigente };
+  window.Interno = { abrirPainel, DOCS, carregarVigente };
 })();

@@ -269,3 +269,78 @@ form input:disabled { background: var(--fundo); color: var(--cinza); }
 @media (min-width: 640px) {
   .cartao { padding: 32px; }
 }
+
+/* Painel interno: menu lateral e área de conteúdo */
+.painel { max-width: 1120px; }
+.casca { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 24px; align-items: start; }
+.menu-lateral {
+  position: sticky;
+  top: 80px;
+  background: var(--branco);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 16px 12px;
+}
+.usuario { padding: 0 8px 12px; border-bottom: 1px solid var(--borda); margin-bottom: 4px; }
+.usuario strong { display: block; font-size: 15px; }
+.usuario span { font-size: 12px; color: var(--cinza); text-transform: capitalize; }
+.grupo-menu {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cinza);
+  margin: 14px 8px 6px;
+}
+.item-menu {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 10px;
+  border-radius: 10px;
+  color: var(--texto);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+}
+.item-menu:hover { background: var(--fundo); }
+.item-menu.ativo { background: var(--verde-claro); color: var(--verde); font-weight: 700; }
+.item-menu svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+.item-menu .badge { margin-left: auto; }
+.conteudo-interno { min-width: 0; }
+.conteudo-interno h1 { margin-top: 0; }
+.titulo-conversa { margin-top: 12px; }
+.indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+.indicador {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  background: var(--branco);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  text-decoration: none;
+  color: var(--texto);
+}
+.indicador strong { font-size: 28px; color: var(--verde); }
+.indicador span { font-size: 14px; color: var(--cinza); }
+a.btn-primario, a.btn-ghost { display: inline-flex; align-items: center; text-decoration: none; }
+
+@media (max-width: 760px) {
+  .casca { grid-template-columns: 1fr; gap: 16px; }
+  .menu-lateral { position: static; padding: 8px; }
+  .usuario, .grupo-menu { display: none; }
+  .menu-lateral nav { display: flex; gap: 6px; overflow-x: auto; }
+  .item-menu { flex-shrink: 0; min-height: 40px; }
+  .item-menu .badge { margin-left: 2px; }
+}
