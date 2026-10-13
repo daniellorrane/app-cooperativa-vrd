@@ -126,6 +126,7 @@
     const [, sub] = caminho;
     if (sub === "carrinho" || sub === "favoritos") return `loja/${sub}`;
     if (sub === "pedidos" || sub === "pedido") return "loja/pedidos";
+    if (sub === "finalizar") return "loja/carrinho";
     if (sub === "listas" || sub === "lista" || sub === "compartilhada") return "loja/listas";
     if (sub === "gerenciar") return "loja/gerenciar";
     return "loja";

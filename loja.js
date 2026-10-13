@@ -459,7 +459,7 @@ window.Loja = (() => {
       });
     });
 
-    alvo.querySelector("#finalizar")?.addEventListener("click", (ev) => finalizarCompra(alvo, ev.currentTarget));
+    alvo.querySelector("#finalizar")?.addEventListener("click", () => { location.hash = "#loja/finalizar"; });
   }
 
   // ---------- Favoritos ----------
@@ -820,6 +820,13 @@ window.Loja = (() => {
         <label>Estoque
           <input type="number" name="estoque" min="0" max="1000000" step="1" required value="${Number(atual?.estoque ?? 0)}" />
         </label>
+        <fieldset class="medidas">
+          <legend>Para calcular o frete <small>(obrigatório para transportadora)</small></legend>
+          <label>Peso (g) <input type="number" name="peso_g" min="1" max="100000" step="1" value="${esc(atual?.peso_g ?? "")}" /></label>
+          <label>Altura (cm) <input type="number" name="altura_cm" min="1" max="200" step="1" value="${esc(atual?.altura_cm ?? "")}" /></label>
+          <label>Largura (cm) <input type="number" name="largura_cm" min="1" max="200" step="1" value="${esc(atual?.largura_cm ?? "")}" /></label>
+          <label>Comprimento (cm) <input type="number" name="comprimento_cm" min="1" max="200" step="1" value="${esc(atual?.comprimento_cm ?? "")}" /></label>
+        </fieldset>
         <label>Foto <small>(JPG, PNG ou WEBP, até 2 MB)</small>
           <input type="file" name="foto" accept="image/jpeg,image/png,image/webp" />
         </label>
@@ -850,6 +857,8 @@ window.Loja = (() => {
       if (promoTexto && (!Number.isFinite(promo) || promo < 1)) return mostraErro("Informe um preço promocional válido.");
       if (promo !== null && promo >= preco) return mostraErro("O preço promocional precisa ser menor que o preço normal.");
       if (!Number.isInteger(estoque) || estoque < 0) return mostraErro("O estoque precisa ser um número inteiro, zero ou maior.");
+      const medidas = ["peso_g", "altura_cm", "largura_cm", "comprimento_cm"].map((c) => numeroOuNulo(f.get(c)));
+      if (medidas.some((m) => m !== null && !Number.isInteger(m))) return mostraErro("Peso e medidas precisam ser números inteiros.");
       const novaFoto = arquivo instanceof File && arquivo.size > 0;
       if (novaFoto && !TIPOS_FOTO[arquivo.type]) return mostraErro("A foto precisa ser JPG, PNG ou WEBP.");
       if (novaFoto && arquivo.size > LIMITE_FOTO) return mostraErro("A foto passou de 2 MB. Reduza o tamanho e tente de novo.");
@@ -883,6 +892,10 @@ window.Loja = (() => {
         estoque,
         ativo: f.has("ativo"),
         imagem_caminho: caminho,
+        peso_g: numeroOuNulo(f.get("peso_g")),
+        altura_cm: numeroOuNulo(f.get("altura_cm")),
+        largura_cm: numeroOuNulo(f.get("largura_cm")),
+        comprimento_cm: numeroOuNulo(f.get("comprimento_cm")),
       };
 
       const resposta = atual
@@ -909,7 +922,13 @@ window.Loja = (() => {
     pronto_retirada: "Pronto para retirada",
     retirado: "Retirado",
     cancelado: "Cancelado",
+    enviado: "Enviado",
+    entregue: "Entregue",
     expirado: "Expirado",
+  };
+  const numeroOuNulo = (valor) => {
+    const t = String(valor ?? "").trim();
+    return t === "" ? null : Number(t);
   };
   const dataHora = (valor) => new Date(valor).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
   const pedidoAberto = (p) => p.status === "aguardando_pagamento" && new Date(p.expira_em).getTime() > Date.now();
@@ -929,28 +948,11 @@ window.Loja = (() => {
     return { url: data?.init_point };
   }
 
-  // Finaliza: cria o pedido (reserva o estoque) e leva ao checkout do Mercado Pago.
-  async function finalizarCompra(alvo, botao) {
-    botao.disabled = true;
-    const { data: pedidoId, error } = await sb().rpc("criar_pedido_loja", { p_metodo: "retirada" });
-    if (error) {
-      botao.disabled = false;
-      return erroNa(alvo, error.message);
-    }
-    const { url, erro } = await pagarPedido(pedidoId);
-    if (erro || !url) {
-      try { sessionStorage.setItem("loja-aviso", erro || "Pagamento indisponível."); } catch (_) { /* sem armazenamento */ }
-      location.hash = `#loja/pedido/${pedidoId}`;
-      return;
-    }
-    window.location.href = url;
-  }
-
   async function pedido(alvo, perfil, id, retorno) {
     carregando(alvo);
     const [{ data: p, error }, { data: config }] = await Promise.all([
       sb().from("pedidos")
-        .select("id, codigo, status, total_centavos, expira_em, criado_em, observacao_admin, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
+        .select("id, codigo, status, metodo_entrega, subtotal_centavos, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
         .eq("id", id).maybeSingle(),
       sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
     ]);
@@ -970,6 +972,24 @@ window.Loja = (() => {
     const aberto = pedidoAberto(p);
     const confirmando = retorno && p.status === "aguardando_pagamento";
     const itens = p.pedido_itens || [];
+    const retirada = p.metodo_entrega === "retirada";
+    const e = p.endereco;
+
+    const blocoEntrega = retirada
+      ? `<section class="cartao">
+           <h2>Retirada na cooperativa</h2>
+           <p><strong>${esc(cfg.nome_loja || "Cooperativa")}</strong></p>
+           <p class="texto-puro">${esc(cfg.endereco_retirada || "O endereço será informado pela cooperativa.")}</p>
+           ${cfg.horario_retirada ? `<p class="ajuda">Horário: ${esc(cfg.horario_retirada)}</p>` : ""}
+           <p class="ajuda">Você será avisado no aplicativo quando o pedido estiver pronto para retirada.</p>
+         </section>`
+      : `<section class="cartao">
+           <h2>Entrega</h2>
+           <p><strong>${esc(p.frete_servico || "Entrega")}</strong></p>
+           ${p.prazo_dias ? `<p class="ajuda">Prazo estimado: ${Number(p.prazo_dias)} dia(s) úteis após o envio</p>` : ""}
+           ${p.codigo_rastreio ? `<p>Código de rastreio: <strong>${esc(p.codigo_rastreio)}</strong></p>` : ""}
+           ${e ? `<p class="texto-puro">${esc(e.logradouro)}, ${esc(e.numero)}${e.complemento ? " - " + esc(e.complemento) : ""}<br />${esc(e.bairro)} · ${esc(e.cidade)}/${esc(e.uf)} · CEP ${esc(e.cep)}</p>` : ""}
+         </section>`;
 
     alvo.innerHTML = `
       <p class="rodape-form"><a href="#loja/pedidos">← Meus pedidos</a></p>
@@ -988,15 +1008,10 @@ window.Loja = (() => {
               <span class="ajuda">${Number(i.quantidade)} × ${reais(i.preco_unitario_centavos)}</span>
             </article>`).join("")}
         </div>
+        <p>Subtotal: ${reais(p.subtotal_centavos)}${p.frete_centavos ? ` · Frete: ${reais(p.frete_centavos)}` : " · Frete: sem custo"}</p>
         <p><strong>Total: ${reais(p.total_centavos)}</strong></p>
       </section>
-      <section class="cartao">
-        <h2>Retirada na cooperativa</h2>
-        <p><strong>${esc(cfg.nome_loja || "Cooperativa")}</strong></p>
-        <p class="texto-puro">${esc(cfg.endereco_retirada || "O endereço será informado pela cooperativa.")}</p>
-        ${cfg.horario_retirada ? `<p class="ajuda">Horário: ${esc(cfg.horario_retirada)}</p>` : ""}
-        <p class="ajuda">Você será avisado no aplicativo quando o pedido estiver pronto para retirada.</p>
-      </section>
+      ${blocoEntrega}
       ${aberto
         ? `<section class="cartao">
              <p>Pague até ${dataHora(p.expira_em)}. Depois desse prazo, o pedido é cancelado e os produtos voltam ao estoque.</p>
@@ -1070,16 +1085,21 @@ window.Loja = (() => {
         : '<p class="ajuda">Você ainda não fez pedidos. <a href="#loja">Ver produtos</a></p>'}`;
   }
 
-  const ACOES_PEDIDO = {
-    pago: [["em_separacao", "Iniciar separação"], ["cancelado", "Cancelar e devolver estoque"]],
-    em_separacao: [["pronto_retirada", "Pronto para retirada"], ["cancelado", "Cancelar e devolver estoque"]],
-    pronto_retirada: [["retirado", "Marcar como retirado"]],
+  const ACOES_PEDIDO = (p) => {
+    const cancelar = ["cancelado", "Cancelar e devolver estoque"];
+    if (p.status === "pago") return [["em_separacao", "Iniciar separação"], cancelar];
+    if (p.status === "em_separacao") {
+      return p.metodo_entrega === "retirada" ? [["pronto_retirada", "Pronto para retirada"], cancelar] : [cancelar];
+    }
+    if (p.status === "pronto_retirada") return [["retirado", "Marcar como retirado"]];
+    if (p.status === "enviado") return [["entregue", "Marcar como entregue"]];
+    return [];
   };
 
   async function gerenciarPedidos(alvo) {
     carregando(alvo);
     const { data, error } = await sb().from("pedidos")
-      .select("id, codigo, status, total_centavos, criado_em, observacao_admin, usuarios(nome_completo), pedido_itens(nome_snapshot, quantidade)")
+      .select("id, codigo, status, metodo_entrega, frete_servico, endereco, codigo_rastreio, total_centavos, criado_em, observacao_admin, usuarios(nome_completo), pedido_itens(nome_snapshot, quantidade)")
       .order("criado_em", { ascending: false })
       .limit(60);
 
@@ -1095,24 +1115,54 @@ window.Loja = (() => {
       ${ERRO_GERAL}
       ${(data || []).length
         ? `<div class="lista">
-             ${data.map((p) => `
-               <article class="item avaliacao-item" data-pedido="${esc(p.id)}">
-                 <span class="evento-texto">
-                   <strong>${esc(p.codigo)}</strong>
-                   <span class="ajuda">${esc(p.usuarios?.nome_completo || "Cooperado")} · ${dataHora(p.criado_em)} · ${reais(p.total_centavos)}</span>
-                 </span>
-                 <span class="marcas"><span class="marca">${esc(STATUS_PEDIDO[p.status] || p.status)}</span></span>
-                 <ul class="ajuda">
-                   ${(p.pedido_itens || []).map((i) => `<li>${Number(i.quantidade)} × ${esc(i.nome_snapshot)}</li>`).join("")}
-                 </ul>
-                 ${p.observacao_admin ? `<p class="erro">${esc(p.observacao_admin)}</p>` : ""}
-                 <div class="acoes-evento">
-                   ${(ACOES_PEDIDO[p.status] || []).map(([status, rotulo]) =>
-                     `<button type="button" class="btn-ghost" data-pedido-id="${esc(p.id)}" data-status="${status}">${rotulo}</button>`).join("")}
-                 </div>
-               </article>`).join("")}
+             ${data.map((p) => {
+               const acoes = ACOES_PEDIDO(p);
+               const envio = p.status === "em_separacao" && p.metodo_entrega !== "retirada";
+               return `
+                 <article class="item avaliacao-item" data-pedido="${esc(p.id)}">
+                   <span class="evento-texto">
+                     <strong>${esc(p.codigo)}</strong>
+                     <span class="ajuda">${esc(p.usuarios?.nome_completo || "Cooperado")} · ${dataHora(p.criado_em)} · ${reais(p.total_centavos)}</span>
+                     <span class="ajuda">${p.metodo_entrega === "retirada" ? "Retirada na cooperativa" : esc(p.frete_servico || "Entrega")}</span>
+                   </span>
+                   <span class="marcas"><span class="marca">${esc(STATUS_PEDIDO[p.status] || p.status)}</span></span>
+                   ${p.endereco ? `<p class="texto-puro">${esc(p.endereco.logradouro)}, ${esc(p.endereco.numero)} · ${esc(p.endereco.bairro)} · ${esc(p.endereco.cidade)}/${esc(p.endereco.uf)} · CEP ${esc(p.endereco.cep)}</p>` : ""}
+                   ${p.codigo_rastreio ? `<p>Rastreio: <strong>${esc(p.codigo_rastreio)}</strong></p>` : ""}
+                   <ul class="ajuda">
+                     ${(p.pedido_itens || []).map((i) => `<li>${Number(i.quantidade)} × ${esc(i.nome_snapshot)}</li>`).join("")}
+                   </ul>
+                   ${p.observacao_admin ? `<p class="erro">${esc(p.observacao_admin)}</p>` : ""}
+                   ${envio ? `
+                     <label>Código de rastreio <small>(obrigatório para transportadora)</small>
+                       <input type="text" data-rastreio maxlength="60" />
+                     </label>
+                     <div class="acoes-evento">
+                       <button type="button" class="btn-primario" data-enviar="${esc(p.id)}">Marcar como enviado</button>
+                     </div>` : ""}
+                   <div class="acoes-evento">
+                     ${acoes.map(([status, rotulo]) =>
+                       `<button type="button" class="btn-ghost" data-pedido-id="${esc(p.id)}" data-status="${status}">${rotulo}</button>`).join("")}
+                   </div>
+                 </article>`;
+             }).join("")}
            </div>`
         : '<p class="ajuda">Nenhum pedido ainda.</p>'}`;
+
+    alvo.querySelectorAll("[data-enviar]").forEach((botao) => {
+      botao.addEventListener("click", async () => {
+        const campo = botao.closest("[data-pedido]").querySelector("[data-rastreio]");
+        botao.disabled = true;
+        const { error: falha } = await sb().rpc("marcar_envio_loja", {
+          p_pedido: botao.dataset.enviar,
+          p_codigo: campo.value.trim() || null,
+        });
+        if (falha) {
+          botao.disabled = false;
+          return erroNa(alvo, falha.message);
+        }
+        gerenciarPedidos(alvo);
+      });
+    });
 
     alvo.querySelectorAll("[data-pedido-id]").forEach((botao) => {
       botao.addEventListener("click", async () => {
@@ -1139,11 +1189,13 @@ window.Loja = (() => {
     ]);
     const v = Object.fromEntries((linhas || []).map((l) => [l.chave, l.valor]));
     const situacaoTexto = (ok) => (ok ? "configurado" : "não configurado");
+    const centavosParaCampo = (c) => (Number(c || 0) / 100).toFixed(2).replace(".", ",");
+    const selecionado = (ok, valor) => (ok === valor ? "selected" : "");
 
     alvo.innerHTML = `
       <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
       <h1>Pagamento e configurações</h1>
-      <p class="ajuda">Preencha os dados da loja e as chaves do Mercado Pago. As chaves secretas são guardadas de forma protegida. Depois de salvas, o sistema só mostra se estão configuradas.</p>
+      <p class="ajuda">Preencha os dados da loja, de entrega e as chaves de pagamento e frete. As chaves secretas são guardadas de forma protegida. Depois de salvas, o sistema só mostra se estão configuradas.</p>
       ${ERRO_GERAL}
       ${AVISO_GERAL}
       <form id="form-config" class="formulario" novalidate>
@@ -1164,6 +1216,23 @@ window.Loja = (() => {
           <input type="url" name="url_publica_app" maxlength="200" placeholder="https://seu-app.vercel.app" value="${esc(v.url_publica_app || "")}" />
         </label>
 
+        <h2>Entrega</h2>
+        <label>CEP de origem <small>(de onde os pacotes saem)</small>
+          <input type="text" name="cep_origem" inputmode="numeric" maxlength="9" placeholder="00000-000" value="${esc(v.cep_origem || "")}" />
+        </label>
+        <label>Entrega local
+          <select name="entrega_local_ativa">
+            <option value="nao" ${selecionado(v.entrega_local_ativa === "sim" ? "sim" : "nao", "nao")}>Desligada</option>
+            <option value="sim" ${selecionado(v.entrega_local_ativa === "sim" ? "sim" : "nao", "sim")}>Ligada</option>
+          </select>
+        </label>
+        <label>CEPs da entrega local <small>(5 primeiros números, separados por vírgula)</small>
+          <input type="text" name="entrega_local_ceps" maxlength="200" placeholder="Ex.: 35160, 35161" value="${esc(v.entrega_local_ceps || "")}" />
+        </label>
+        <label>Taxa da entrega local (R$)
+          <input type="text" name="taxa_entrega_local" inputmode="decimal" placeholder="Ex.: 10,00" value="${centavosParaCampo(v.taxa_entrega_local_centavos)}" />
+        </label>
+
         <h2>Mercado Pago</h2>
         <label>Chave pública
           <input type="text" name="mp_public_key" maxlength="200" value="${esc(v.mp_public_key || "")}" />
@@ -1178,6 +1247,18 @@ window.Loja = (() => {
         </label>
         <p class="ajuda">Endereço de notificação para cadastrar no Mercado Pago:<br />
           <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-pagamento-webhook</code></p>
+
+        <h2>Transportadoras (Melhor Envio)</h2>
+        <label>Ambiente
+          <select name="melhor_envio_sandbox">
+            <option value="sim" ${selecionado(v.melhor_envio_sandbox === "sim" ? "sim" : "nao", "sim")}>Teste (sandbox)</option>
+            <option value="nao" ${selecionado(v.melhor_envio_sandbox === "sim" ? "sim" : "nao", "nao")}>Produção</option>
+          </select>
+        </label>
+        <label>Token de acesso <small>(${situacaoTexto(situacao?.melhor_envio_token)})</small>
+          <input type="text" name="melhor_envio_token" autocomplete="off" spellcheck="false" maxlength="2000"
+            placeholder="${situacao?.melhor_envio_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Melhor Envio"}" />
+        </label>
         <button type="submit" class="btn-primario">Salvar configurações</button>
       </form>`;
 
@@ -1187,6 +1268,10 @@ window.Loja = (() => {
       const f = new FormData(form);
       const minutos = Number(f.get("minutos_expiracao_pedido"));
       const url = String(f.get("url_publica_app") || "").trim();
+      const cepOrigem = String(f.get("cep_origem") || "").replace(/\D/g, "");
+      const taxa = String(f.get("taxa_entrega_local") || "").trim();
+      const taxaCentavos = taxa ? parseReais(taxa) : 0;
+
       if (!Number.isInteger(minutos) || minutos < 5 || minutos > 1440) {
         return erroNa(alvo, "O prazo para pagar precisa estar entre 5 e 1440 minutos.");
       }
@@ -1197,20 +1282,30 @@ window.Loja = (() => {
           return erroNa(alvo, "O endereço do aplicativo precisa começar com https://");
         }
       }
+      if (cepOrigem && cepOrigem.length !== 8) {
+        return erroNa(alvo, "O CEP de origem precisa ter 8 números.");
+      }
+      if (!Number.isFinite(taxaCentavos) || taxaCentavos < 0) {
+        return erroNa(alvo, "Informe a taxa da entrega local no formato 10,00.");
+      }
 
       const botao = form.querySelector("button[type=submit]");
       botao.disabled = true;
-      const campos = ["nome_loja", "endereco_retirada", "horario_retirada", "minutos_expiracao_pedido", "url_publica_app", "mp_public_key"];
-      const { error: falha } = await sb().from("loja_configuracoes").upsert(
-        campos.map((chave) => ({ chave, valor: String(f.get(chave) || "").trim(), atualizado_em: new Date().toISOString() })),
-        { onConflict: "chave" }
-      );
+      const campos = [
+        "nome_loja", "endereco_retirada", "horario_retirada", "minutos_expiracao_pedido",
+        "url_publica_app", "mp_public_key", "entrega_local_ativa", "entrega_local_ceps", "melhor_envio_sandbox",
+      ];
+      const linhasSalvar = campos.map((chave) => ({ chave, valor: String(f.get(chave) || "").trim(), atualizado_em: new Date().toISOString() }));
+      linhasSalvar.push({ chave: "cep_origem", valor: cepOrigem, atualizado_em: new Date().toISOString() });
+      linhasSalvar.push({ chave: "taxa_entrega_local_centavos", valor: String(taxaCentavos), atualizado_em: new Date().toISOString() });
+
+      const { error: falha } = await sb().from("loja_configuracoes").upsert(linhasSalvar, { onConflict: "chave" });
       if (falha) {
         botao.disabled = false;
         return erroNa(alvo, falha.message);
       }
 
-      for (const nome of ["mp_access_token", "mp_webhook_secret"]) {
+      for (const nome of ["mp_access_token", "mp_webhook_secret", "melhor_envio_token"]) {
         const valor = String(f.get(nome) || "").trim();
         if (!valor) continue;
         const { error: falhaSegredo } = await sb().rpc("salvar_segredo_loja", { p_nome: nome, p_valor: valor });
@@ -1225,6 +1320,175 @@ window.Loja = (() => {
     });
   }
 
+  // ---------- Entrega e pagamento (checkout) ----------
+
+  const formatarCep = (valor) => {
+    const d = String(valor || "").replace(/\D/g, "").slice(0, 8);
+    return d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
+  };
+
+  async function buscarCep(cep) {
+    try {
+      const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const dados = await r.json();
+      return dados.erro ? null : dados;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function finalizar(alvo, perfil) {
+    carregando(alvo);
+    const { data: itens, error } = await sb().from("carrinho_itens")
+      .select("quantidade, produto:loja_produtos(preco_centavos, preco_promo_centavos)")
+      .eq("usuario_id", perfil.id);
+    const linhas = (itens || []).filter((i) => i.produto);
+
+    if (error || !linhas.length) {
+      alvo.innerHTML = `<p class="rodape-form"><a href="#loja/carrinho">← Voltar ao carrinho</a></p><p class="ajuda">Seu carrinho está vazio.</p>`;
+      return;
+    }
+
+    const subtotal = linhas.reduce((soma, i) => soma + i.quantidade * (i.produto.preco_promo_centavos ?? i.produto.preco_centavos), 0);
+    let cotacao = null;
+    let frete = null;
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/carrinho">← Voltar ao carrinho</a></p>
+      <h1>Entrega e pagamento</h1>
+      <section class="cartao"><p>Subtotal dos produtos: <strong>${reais(subtotal)}</strong></p></section>
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      <form id="form-entrega" class="formulario" novalidate>
+        <h2>Como receber</h2>
+        <label>CEP <small>(para calcular a entrega)</small>
+          <input type="text" name="cep" inputmode="numeric" autocomplete="postal-code" maxlength="9" placeholder="00000-000" />
+        </label>
+        <button type="button" class="btn-ghost" id="calcular">Calcular entrega</button>
+        <div id="opcoes"></div>
+        <div id="endereco" hidden>
+          <h2>Endereço de entrega</h2>
+          <label>Rua, avenida ou praça <input type="text" name="logradouro" maxlength="150" /></label>
+          <div class="linha-campos">
+            <label>Número <input type="text" name="numero" maxlength="20" /></label>
+            <label>Complemento <small>(opcional)</small> <input type="text" name="complemento" maxlength="60" /></label>
+          </div>
+          <label>Bairro <input type="text" name="bairro" maxlength="100" /></label>
+          <div class="linha-campos">
+            <label>Cidade <input type="text" name="cidade" maxlength="100" /></label>
+            <label>UF <input type="text" name="uf" maxlength="2" /></label>
+          </div>
+        </div>
+        <p class="total" id="total"></p>
+        <button type="submit" class="btn-primario" id="continuar" disabled>Ir para o pagamento</button>
+      </form>`;
+
+    const form = alvo.querySelector("#form-entrega");
+    const campoCep = form.querySelector("[name=cep]");
+    const enderecoBox = alvo.querySelector("#endereco");
+    const atualizarTotal = () => {
+      const botaoContinuar = alvo.querySelector("#continuar");
+      if (!frete) {
+        alvo.querySelector("#total").textContent = "";
+        botaoContinuar.disabled = true;
+        return;
+      }
+      alvo.querySelector("#total").textContent = `Total: ${reais(subtotal + frete.preco_centavos)} (produtos ${reais(subtotal)} + entrega ${reais(frete.preco_centavos)})`;
+      botaoContinuar.disabled = false;
+    };
+
+    campoCep.addEventListener("input", () => { campoCep.value = formatarCep(campoCep.value); });
+
+    alvo.querySelector("#calcular").addEventListener("click", async (ev) => {
+      const cep = campoCep.value.replace(/\D/g, "");
+      if (cep.length !== 8) return erroNa(alvo, "Informe um CEP com 8 números.");
+      const botao = ev.currentTarget;
+      botao.disabled = true;
+      avisoNa(alvo, "");
+      alvo.querySelector(".erro-geral").hidden = true;
+
+      const { data, error: falha } = await sb().functions.invoke("loja-frete-cotar", { body: { cep } });
+      botao.disabled = false;
+      if (falha) return erroNa(alvo, await mensagemFuncao(falha));
+
+      cotacao = data;
+      frete = null;
+      alvo.querySelector("#opcoes").innerHTML = `
+        <fieldset class="opcoes-entrega">
+          <legend>Escolha a forma de entrega</legend>
+          ${data.opcoes.map((o) => `
+            <label class="opcao-entrega">
+              <input type="radio" name="opcao" value="${esc(o.id)}" data-metodo="${esc(o.metodo)}" data-preco="${Number(o.preco_centavos)}" />
+              <span>
+                <strong>${esc(o.nome)}</strong>
+                <span class="ajuda">${o.preco_centavos ? reais(o.preco_centavos) : "Sem custo"}${o.prazo_dias ? ` · prazo de ${Number(o.prazo_dias)} dia(s) úteis` : ""}</span>
+              </span>
+            </label>`).join("")}
+        </fieldset>`;
+
+      // Preenche o endereço pelo CEP (quando o serviço responde). O cooperado confere e completa.
+      const dadosCep = await buscarCep(cep);
+      if (dadosCep) {
+        form.logradouro.value = dadosCep.logradouro || "";
+        form.bairro.value = dadosCep.bairro || "";
+        form.cidade.value = dadosCep.localidade || "";
+        form.uf.value = dadosCep.uf || "";
+      }
+      enderecoBox.hidden = true;
+      atualizarTotal();
+    });
+
+    alvo.querySelector("#opcoes").addEventListener("change", (ev) => {
+      const escolhida = ev.target.closest("input[name=opcao]");
+      if (!escolhida) return;
+      frete = { id: escolhida.value, metodo: escolhida.dataset.metodo, preco_centavos: Number(escolhida.dataset.preco) };
+      enderecoBox.hidden = frete.metodo === "retirada";
+      atualizarTotal();
+    });
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!cotacao || !frete) return erroNa(alvo, "Escolha uma forma de entrega.");
+
+      let endereco = null;
+      if (frete.metodo !== "retirada") {
+        const f = new FormData(form);
+        endereco = {
+          cep: campoCep.value.replace(/\D/g, ""),
+          logradouro: String(f.get("logradouro") || "").trim(),
+          numero: String(f.get("numero") || "").trim(),
+          complemento: String(f.get("complemento") || "").trim() || null,
+          bairro: String(f.get("bairro") || "").trim(),
+          cidade: String(f.get("cidade") || "").trim(),
+          uf: String(f.get("uf") || "").trim().toUpperCase(),
+        };
+        if (!endereco.logradouro || !endereco.numero || !endereco.bairro || !endereco.cidade || endereco.uf.length !== 2) {
+          return erroNa(alvo, "Preencha o endereço de entrega: rua, número, bairro, cidade e UF.");
+        }
+      }
+
+      const botao = alvo.querySelector("#continuar");
+      botao.disabled = true;
+      const { data: pedidoId, error: falha } = await sb().rpc("criar_pedido_loja", {
+        p_cotacao: cotacao.cotacao_id,
+        p_opcao: frete.id,
+        p_endereco: endereco,
+      });
+      if (falha) {
+        botao.disabled = false;
+        return erroNa(alvo, falha.message);
+      }
+
+      const { url, erro } = await pagarPedido(pedidoId);
+      if (erro || !url) {
+        try { sessionStorage.setItem("loja-aviso", erro || "Pagamento indisponível."); } catch (_) { /* sem armazenamento */ }
+        location.hash = `#loja/pedido/${pedidoId}`;
+        return;
+      }
+      window.location.href = url;
+    });
+  }
+
   // caminho: partes do endereço após "loja". Ex.: ["loja", "produto", "<id>"].
   function tela(alvo, perfil, caminho) {
     const [, primeiro, segundo] = caminho;
@@ -1234,6 +1498,7 @@ window.Loja = (() => {
     if (primeiro === "listas") return listas(alvo, perfil);
     if (primeiro === "lista" && segundo) return lista(alvo, perfil, segundo);
     if (primeiro === "compartilhada" && segundo) return compartilhada(alvo, perfil, segundo);
+    if (primeiro === "finalizar") return finalizar(alvo, perfil);
     if (primeiro === "pedidos") return pedidos(alvo);
     if (primeiro === "pedido" && segundo) return pedido(alvo, perfil, segundo, location.search.includes("retorno="));
     if (primeiro === "gerenciar") {
