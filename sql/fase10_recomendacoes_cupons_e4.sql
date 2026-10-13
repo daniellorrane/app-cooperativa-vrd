@@ -612,3 +612,9 @@ revoke all on function privado.desconto_cupom(public.cupons_loja, integer) from 
 
 -- 6. AJUSTE PÓS-ADVISOR: função de cálculo do cupom com search_path fixo.
 alter function privado.desconto_cupom(public.cupons_loja, integer) set search_path = public, privado;
+
+-- 7. HOTFIX: o total do pedido agora desconta o cupom. A regra antiga (total = subtotal + frete)
+-- fazia todo pedido com cupom falhar ao ser criado.
+alter table public.pedidos drop constraint if exists pedidos_check;
+alter table public.pedidos add constraint pedidos_check
+  check (total_centavos = subtotal_centavos - desconto_centavos + frete_centavos);
