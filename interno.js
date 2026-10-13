@@ -62,6 +62,7 @@
     { grupo: "Principal", rota: "ouvidoria", titulo: "Ouvidoria", icone: "flag" },
     { grupo: "Loja", rota: "loja", titulo: "Loja", icone: "bag" },
     { grupo: "Loja", rota: "loja/carrinho", titulo: "Carrinho", icone: "cart" },
+    { grupo: "Loja", rota: "loja/pedidos", titulo: "Meus pedidos", icone: "receipt" },
     { grupo: "Loja", rota: "loja/favoritos", titulo: "Favoritos", icone: "heart" },
     { grupo: "Loja", rota: "loja/listas", titulo: "Listas de presentes", icone: "list" },
     { grupo: "Conta", rota: "carteirinha", titulo: "Carteirinha digital", icone: "id" },
@@ -95,6 +96,7 @@
     cart: "M3 4h2l2.4 11h10.2L20 7H7M9 19.5a.5.5 0 1 0 0 .01M17 19.5a.5.5 0 1 0 0 .01",
     heart: "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z",
     list: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
+    receipt: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6",
   };
   const icone = (nome) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONES[nome]}"/></svg>`;
 
@@ -123,6 +125,7 @@
     if (caminho[0] !== "loja") return null;
     const [, sub] = caminho;
     if (sub === "carrinho" || sub === "favoritos") return `loja/${sub}`;
+    if (sub === "pedidos" || sub === "pedido") return "loja/pedidos";
     if (sub === "listas" || sub === "lista" || sub === "compartilhada") return "loja/listas";
     if (sub === "gerenciar") return "loja/gerenciar";
     return "loja";

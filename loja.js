@@ -433,8 +433,9 @@ window.Loja = (() => {
            <section class="cartao resumo-carrinho">
              <p>Itens disponíveis: ${disponiveis.length}</p>
              <p><strong>Subtotal: ${reais(total)}</strong></p>
-             <p class="ajuda">Frete e pagamento serão informados na próxima etapa da compra.</p>
-             <button type="button" class="btn-primario" disabled>Finalizar compra (em breve)</button>
+             <p class="ajuda">Retirada na cooperativa. Entrega e frete chegam em breve.</p>
+             <button type="button" class="btn-primario" id="finalizar" ${disponiveis.length && disponiveis.length === itens.length ? "" : "disabled"}>Finalizar compra</button>
+             ${disponiveis.length && disponiveis.length !== itens.length ? '<p class="ajuda">Remova os itens indisponíveis para finalizar.</p>' : ""}
            </section>`}`;
 
     alvo.querySelectorAll("[data-qtd]").forEach((campo) => {
@@ -457,6 +458,8 @@ window.Loja = (() => {
         carrinho(alvo, perfil);
       });
     });
+
+    alvo.querySelector("#finalizar")?.addEventListener("click", (ev) => finalizarCompra(alvo, ev.currentTarget));
   }
 
   // ---------- Favoritos ----------
@@ -703,7 +706,11 @@ window.Loja = (() => {
       <p class="rodape-form"><a href="#loja">← Voltar para a loja</a></p>
       <div class="cabecalho-pagina">
         <h1>Gerenciar loja</h1>
-        <a class="btn-primario" href="#loja/gerenciar/novo">Novo produto</a>
+        <div class="acoes-evento">
+          <a class="btn-ghost" href="#loja/gerenciar/pedidos">Pedidos</a>
+          <a class="btn-ghost" href="#loja/gerenciar/pagamento">Pagamento e configurações</a>
+          <a class="btn-primario" href="#loja/gerenciar/novo">Novo produto</a>
+        </div>
       </div>
       <p class="ajuda">Preços, estoque e publicação. Mudanças de preço ficam registradas na auditoria.</p>
       ${ERRO_GERAL}
@@ -893,6 +900,329 @@ window.Loja = (() => {
     });
   }
 
+  // ---------- Pedidos e pagamento (E2) ----------
+
+  const STATUS_PEDIDO = {
+    aguardando_pagamento: "Aguardando pagamento",
+    pago: "Pago",
+    em_separacao: "Em separação",
+    pronto_retirada: "Pronto para retirada",
+    retirado: "Retirado",
+    cancelado: "Cancelado",
+    expirado: "Expirado",
+  };
+  const dataHora = (valor) => new Date(valor).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  const pedidoAberto = (p) => p.status === "aguardando_pagamento" && new Date(p.expira_em).getTime() > Date.now();
+
+  // O SDK devolve uma mensagem genérica. A Edge Function manda o motivo real no corpo.
+  async function mensagemFuncao(erro) {
+    try {
+      const corpo = await erro.context?.json();
+      if (corpo?.erro) return corpo.erro;
+    } catch (_) { /* sem corpo legível */ }
+    return "Não foi possível abrir o pagamento agora. Tente de novo em instantes.";
+  }
+
+  async function pagarPedido(pedidoId) {
+    const { data, error } = await sb().functions.invoke("loja-pagamento-criar", { body: { pedido_id: pedidoId } });
+    if (error) return { erro: await mensagemFuncao(error) };
+    return { url: data?.init_point };
+  }
+
+  // Finaliza: cria o pedido (reserva o estoque) e leva ao checkout do Mercado Pago.
+  async function finalizarCompra(alvo, botao) {
+    botao.disabled = true;
+    const { data: pedidoId, error } = await sb().rpc("criar_pedido_loja", { p_metodo: "retirada" });
+    if (error) {
+      botao.disabled = false;
+      return erroNa(alvo, error.message);
+    }
+    const { url, erro } = await pagarPedido(pedidoId);
+    if (erro || !url) {
+      try { sessionStorage.setItem("loja-aviso", erro || "Pagamento indisponível."); } catch (_) { /* sem armazenamento */ }
+      location.hash = `#loja/pedido/${pedidoId}`;
+      return;
+    }
+    window.location.href = url;
+  }
+
+  async function pedido(alvo, perfil, id, retorno) {
+    carregando(alvo);
+    const [{ data: p, error }, { data: config }] = await Promise.all([
+      sb().from("pedidos")
+        .select("id, codigo, status, total_centavos, expira_em, criado_em, observacao_admin, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
+        .eq("id", id).maybeSingle(),
+      sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
+    ]);
+
+    let aviso = "";
+    try {
+      aviso = sessionStorage.getItem("loja-aviso") || "";
+      sessionStorage.removeItem("loja-aviso");
+    } catch (_) { /* sem armazenamento */ }
+
+    if (error || !p) {
+      alvo.innerHTML = `<p class="rodape-form"><a href="#loja/pedidos">← Meus pedidos</a></p><p class="ajuda">Pedido não encontrado.</p>`;
+      return;
+    }
+
+    const cfg = Object.fromEntries((config || []).map((c) => [c.chave, c.valor]));
+    const aberto = pedidoAberto(p);
+    const confirmando = retorno && p.status === "aguardando_pagamento";
+    const itens = p.pedido_itens || [];
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/pedidos">← Meus pedidos</a></p>
+      <h1>Pedido ${esc(p.codigo)}</h1>
+      <p class="marcas"><span class="marca">${esc(STATUS_PEDIDO[p.status] || p.status)}</span></p>
+      ${aviso ? `<p class="erro" role="alert">${esc(aviso)}</p>` : ""}
+      ${confirmando ? '<p class="aviso-geral" role="status">Estamos confirmando seu pagamento. Esta página se atualiza sozinha.</p>' : ""}
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      <section class="cartao">
+        <h2>Itens</h2>
+        <div class="lista">
+          ${itens.map((i) => `
+            <article class="item">
+              <strong>${esc(i.nome_snapshot)}</strong>
+              <span class="ajuda">${Number(i.quantidade)} × ${reais(i.preco_unitario_centavos)}</span>
+            </article>`).join("")}
+        </div>
+        <p><strong>Total: ${reais(p.total_centavos)}</strong></p>
+      </section>
+      <section class="cartao">
+        <h2>Retirada na cooperativa</h2>
+        <p><strong>${esc(cfg.nome_loja || "Cooperativa")}</strong></p>
+        <p class="texto-puro">${esc(cfg.endereco_retirada || "O endereço será informado pela cooperativa.")}</p>
+        ${cfg.horario_retirada ? `<p class="ajuda">Horário: ${esc(cfg.horario_retirada)}</p>` : ""}
+        <p class="ajuda">Você será avisado no aplicativo quando o pedido estiver pronto para retirada.</p>
+      </section>
+      ${aberto
+        ? `<section class="cartao">
+             <p>Pague até ${dataHora(p.expira_em)}. Depois desse prazo, o pedido é cancelado e os produtos voltam ao estoque.</p>
+             <div class="acoes-evento">
+               <button type="button" class="btn-primario" id="pagar">Pagar agora</button>
+               <button type="button" class="btn-ghost" id="cancelar">Cancelar pedido</button>
+             </div>
+           </section>`
+        : ""}`;
+
+    alvo.querySelector("#pagar")?.addEventListener("click", async (ev) => {
+      const botao = ev.currentTarget;
+      botao.disabled = true;
+      const { url, erro } = await pagarPedido(p.id);
+      if (erro || !url) {
+        botao.disabled = false;
+        return erroNa(alvo, erro || "Pagamento indisponível.");
+      }
+      window.location.href = url;
+    });
+
+    alvo.querySelector("#cancelar")?.addEventListener("click", async () => {
+      if (!confirm("Cancelar este pedido? Os produtos voltam ao estoque.")) return;
+      const { error: falha } = await sb().rpc("cancelar_pedido_loja", { p_pedido: p.id });
+      if (falha) return erroNa(alvo, falha.message);
+      location.hash = "#loja/pedidos";
+    });
+
+    // Depois de voltar do Mercado Pago, espera a confirmação chegar (até 1 minuto).
+    if (confirmando) {
+      const hashAtual = location.hash;
+      let tentativas = 0;
+      const ciclo = setInterval(async () => {
+        tentativas += 1;
+        if (location.hash !== hashAtual || tentativas > 12) return clearInterval(ciclo);
+        const { data: atual } = await sb().from("pedidos").select("status").eq("id", p.id).maybeSingle();
+        if (atual && atual.status !== "aguardando_pagamento") {
+          clearInterval(ciclo);
+          pedido(alvo, perfil, p.id, false);
+        }
+      }, 5000);
+    }
+  }
+
+  async function pedidos(alvo) {
+    carregando(alvo);
+    const { data, error } = await sb().from("pedidos")
+      .select("id, codigo, status, total_centavos, criado_em")
+      .order("criado_em", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja">← Voltar para a loja</a></p>
+      <h1>Meus pedidos</h1>
+      ${(data || []).length
+        ? `<div class="lista">
+             ${data.map((p) => `
+               <a class="item evento" href="#loja/pedido/${esc(p.id)}">
+                 <span class="evento-texto">
+                   <strong>${esc(p.codigo)}</strong>
+                   <span class="ajuda">${dataHora(p.criado_em)} · ${reais(p.total_centavos)}</span>
+                   <span class="marcas"><span class="marca">${esc(STATUS_PEDIDO[p.status] || p.status)}</span></span>
+                 </span>
+               </a>`).join("")}
+           </div>`
+        : '<p class="ajuda">Você ainda não fez pedidos. <a href="#loja">Ver produtos</a></p>'}`;
+  }
+
+  const ACOES_PEDIDO = {
+    pago: [["em_separacao", "Iniciar separação"], ["cancelado", "Cancelar e devolver estoque"]],
+    em_separacao: [["pronto_retirada", "Pronto para retirada"], ["cancelado", "Cancelar e devolver estoque"]],
+    pronto_retirada: [["retirado", "Marcar como retirado"]],
+  };
+
+  async function gerenciarPedidos(alvo) {
+    carregando(alvo);
+    const { data, error } = await sb().from("pedidos")
+      .select("id, codigo, status, total_centavos, criado_em, observacao_admin, usuarios(nome_completo), pedido_itens(nome_snapshot, quantidade)")
+      .order("criado_em", { ascending: false })
+      .limit(60);
+
+    if (error) {
+      alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <h1>Pedidos da loja</h1>
+      <p class="ajuda">Pedidos pagos aparecem aqui para separação. Cancelar um pedido pago devolve o estoque, mas o reembolso é feito no Mercado Pago.</p>
+      ${ERRO_GERAL}
+      ${(data || []).length
+        ? `<div class="lista">
+             ${data.map((p) => `
+               <article class="item avaliacao-item" data-pedido="${esc(p.id)}">
+                 <span class="evento-texto">
+                   <strong>${esc(p.codigo)}</strong>
+                   <span class="ajuda">${esc(p.usuarios?.nome_completo || "Cooperado")} · ${dataHora(p.criado_em)} · ${reais(p.total_centavos)}</span>
+                 </span>
+                 <span class="marcas"><span class="marca">${esc(STATUS_PEDIDO[p.status] || p.status)}</span></span>
+                 <ul class="ajuda">
+                   ${(p.pedido_itens || []).map((i) => `<li>${Number(i.quantidade)} × ${esc(i.nome_snapshot)}</li>`).join("")}
+                 </ul>
+                 ${p.observacao_admin ? `<p class="erro">${esc(p.observacao_admin)}</p>` : ""}
+                 <div class="acoes-evento">
+                   ${(ACOES_PEDIDO[p.status] || []).map(([status, rotulo]) =>
+                     `<button type="button" class="btn-ghost" data-pedido-id="${esc(p.id)}" data-status="${status}">${rotulo}</button>`).join("")}
+                 </div>
+               </article>`).join("")}
+           </div>`
+        : '<p class="ajuda">Nenhum pedido ainda.</p>'}`;
+
+    alvo.querySelectorAll("[data-pedido-id]").forEach((botao) => {
+      botao.addEventListener("click", async () => {
+        if (botao.dataset.status === "cancelado" && !confirm("Cancelar este pedido e devolver os produtos ao estoque?")) return;
+        botao.disabled = true;
+        const { error: falha } = await sb().rpc("avancar_pedido_loja", {
+          p_pedido: botao.dataset.pedidoId,
+          p_status: botao.dataset.status,
+        });
+        if (falha) {
+          botao.disabled = false;
+          return erroNa(alvo, falha.message);
+        }
+        gerenciarPedidos(alvo);
+      });
+    });
+  }
+
+  async function configuracoesPagamento(alvo) {
+    carregando(alvo);
+    const [{ data: linhas }, { data: situacao }] = await Promise.all([
+      sb().from("loja_configuracoes").select("chave, valor"),
+      sb().rpc("status_loja_pagamento"),
+    ]);
+    const v = Object.fromEntries((linhas || []).map((l) => [l.chave, l.valor]));
+    const situacaoTexto = (ok) => (ok ? "configurado" : "não configurado");
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <h1>Pagamento e configurações</h1>
+      <p class="ajuda">Preencha os dados da loja e as chaves do Mercado Pago. As chaves secretas são guardadas de forma protegida. Depois de salvas, o sistema só mostra se estão configuradas.</p>
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      <form id="form-config" class="formulario" novalidate>
+        <h2>Dados da loja</h2>
+        <label>Nome da loja
+          <input type="text" name="nome_loja" maxlength="120" value="${esc(v.nome_loja || "")}" />
+        </label>
+        <label>Endereço para retirada
+          <textarea name="endereco_retirada" rows="3" maxlength="500">${esc(v.endereco_retirada || "")}</textarea>
+        </label>
+        <label>Horário de retirada
+          <input type="text" name="horario_retirada" maxlength="200" placeholder="Ex.: segunda a sexta, 8h às 17h" value="${esc(v.horario_retirada || "")}" />
+        </label>
+        <label>Minutos para pagar um pedido
+          <input type="number" name="minutos_expiracao_pedido" min="5" max="1440" step="1" value="${esc(v.minutos_expiracao_pedido || "30")}" />
+        </label>
+        <label>Endereço do aplicativo <small>(começa com https://)</small>
+          <input type="url" name="url_publica_app" maxlength="200" placeholder="https://seu-app.vercel.app" value="${esc(v.url_publica_app || "")}" />
+        </label>
+
+        <h2>Mercado Pago</h2>
+        <label>Chave pública
+          <input type="text" name="mp_public_key" maxlength="200" value="${esc(v.mp_public_key || "")}" />
+        </label>
+        <label>Token de acesso <small>(${situacaoTexto(situacao?.mp_access_token)}; preencha só para trocar)</small>
+          <input type="password" name="mp_access_token" autocomplete="off" maxlength="300" />
+        </label>
+        <label>Chave secreta do webhook <small>(${situacaoTexto(situacao?.mp_webhook_secret)}; preencha só para trocar)</small>
+          <input type="password" name="mp_webhook_secret" autocomplete="off" maxlength="300" />
+        </label>
+        <p class="ajuda">Endereço de notificação para cadastrar no Mercado Pago:<br />
+          <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-pagamento-webhook</code></p>
+        <button type="submit" class="btn-primario">Salvar configurações</button>
+      </form>`;
+
+    alvo.querySelector("#form-config").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const form = ev.currentTarget;
+      const f = new FormData(form);
+      const minutos = Number(f.get("minutos_expiracao_pedido"));
+      const url = String(f.get("url_publica_app") || "").trim();
+      if (!Number.isInteger(minutos) || minutos < 5 || minutos > 1440) {
+        return erroNa(alvo, "O prazo para pagar precisa estar entre 5 e 1440 minutos.");
+      }
+      if (url) {
+        try {
+          if (new URL(url).protocol !== "https:") throw new Error();
+        } catch (_) {
+          return erroNa(alvo, "O endereço do aplicativo precisa começar com https://");
+        }
+      }
+
+      const botao = form.querySelector("button[type=submit]");
+      botao.disabled = true;
+      const campos = ["nome_loja", "endereco_retirada", "horario_retirada", "minutos_expiracao_pedido", "url_publica_app", "mp_public_key"];
+      const { error: falha } = await sb().from("loja_configuracoes").upsert(
+        campos.map((chave) => ({ chave, valor: String(f.get(chave) || "").trim(), atualizado_em: new Date().toISOString() })),
+        { onConflict: "chave" }
+      );
+      if (falha) {
+        botao.disabled = false;
+        return erroNa(alvo, falha.message);
+      }
+
+      for (const nome of ["mp_access_token", "mp_webhook_secret"]) {
+        const valor = String(f.get(nome) || "").trim();
+        if (!valor) continue;
+        const { error: falhaSegredo } = await sb().rpc("salvar_segredo_loja", { p_nome: nome, p_valor: valor });
+        if (falhaSegredo) {
+          botao.disabled = false;
+          return erroNa(alvo, falhaSegredo.message);
+        }
+      }
+
+      configuracoesPagamento(alvo);
+      avisoNa(alvo, "Configurações salvas.");
+    });
+  }
+
   // caminho: partes do endereço após "loja". Ex.: ["loja", "produto", "<id>"].
   function tela(alvo, perfil, caminho) {
     const [, primeiro, segundo] = caminho;
@@ -902,8 +1232,12 @@ window.Loja = (() => {
     if (primeiro === "listas") return listas(alvo, perfil);
     if (primeiro === "lista" && segundo) return lista(alvo, perfil, segundo);
     if (primeiro === "compartilhada" && segundo) return compartilhada(alvo, perfil, segundo);
+    if (primeiro === "pedidos") return pedidos(alvo);
+    if (primeiro === "pedido" && segundo) return pedido(alvo, perfil, segundo, location.search.includes("retorno="));
     if (primeiro === "gerenciar") {
       if (!ehAdmin(perfil)) return vitrine(alvo, perfil);
+      if (segundo === "pedidos") return gerenciarPedidos(alvo);
+      if (segundo === "pagamento") return configuracoesPagamento(alvo);
       if (segundo === "novo") return formularioProduto(alvo, perfil, null);
       if (segundo) return formularioProduto(alvo, perfil, segundo);
       return gerenciar(alvo);
