@@ -60,9 +60,14 @@
     { grupo: "Principal", rota: "respostas", titulo: "Respostas rápidas", icone: "chat", staff: true },
     { grupo: "Principal", rota: "ajuda", titulo: "Central de ajuda", icone: "help" },
     { grupo: "Principal", rota: "ouvidoria", titulo: "Ouvidoria", icone: "flag" },
+    { grupo: "Loja", rota: "loja", titulo: "Loja", icone: "bag" },
+    { grupo: "Loja", rota: "loja/carrinho", titulo: "Carrinho", icone: "cart" },
+    { grupo: "Loja", rota: "loja/favoritos", titulo: "Favoritos", icone: "heart" },
+    { grupo: "Loja", rota: "loja/listas", titulo: "Listas de presentes", icone: "list" },
     { grupo: "Conta", rota: "carteirinha", titulo: "Carteirinha digital", icone: "id" },
     { grupo: "Conta", rota: "meus-dados", titulo: "Meus dados", icone: "user" },
     { grupo: "Conta", rota: "meus-direitos", titulo: "Privacidade e dados", icone: "shield" },
+    { grupo: "Administração", rota: "loja/gerenciar", titulo: "Gerenciar loja", icone: "bag", admin: true },
     { grupo: "Administração", rota: "admin/cadastros", titulo: "Cadastros", icone: "check", admin: true },
     { grupo: "Administração", rota: "admin/areas", titulo: "Áreas e funcionários", icone: "map", admin: true },
     { grupo: "Administração", rota: "admin/documentos", titulo: "Termos e privacidade", icone: "doc", admin: true },
@@ -86,6 +91,10 @@
     poll: "M4 20h16M7 16V11M12 16V6M17 16v-4",
     id: "M3 6h18v12H3zM7 10a2 2 0 1 0 0 .01M13 10h5M13 14h4",
     help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01",
+    bag: "M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2",
+    cart: "M3 4h2l2.4 11h10.2L20 7H7M9 19.5a.5.5 0 1 0 0 .01M17 19.5a.5.5 0 1 0 0 .01",
+    heart: "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z",
+    list: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
   };
   const icone = (nome) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONES[nome]}"/></svg>`;
 
@@ -109,6 +118,16 @@
 
   // ---------- Casca do painel ----------
 
+  // Qual item do menu fica destacado dentro da loja (carrinho, favoritos, listas e gestão).
+  function caminhoAtivoLoja(caminho) {
+    if (caminho[0] !== "loja") return null;
+    const [, sub] = caminho;
+    if (sub === "carrinho" || sub === "favoritos") return `loja/${sub}`;
+    if (sub === "listas" || sub === "lista" || sub === "compartilhada") return "loja/listas";
+    if (sub === "gerenciar") return "loja/gerenciar";
+    return "loja";
+  }
+
   // Monta o menu e a área de conteúdo. "extras" traz as telas que vivem em app.js (Meus dados, aprovação de cadastros).
   async function abrirPainel(usuario, raiz, hash, extras = {}) {
     perfil = usuario;
@@ -118,7 +137,7 @@
     const equipe = admin || perfil.tipo_acesso === "funcionario";
     const caminho = (hash || "inicio").split("/");
     const chave = caminho[0] === "admin" ? caminho.join("/") : caminho[0];
-    const ativo = caminho[0] === "conversa" ? "conversas" : chave;
+    const ativo = caminho[0] === "conversa" ? "conversas" : caminhoAtivoLoja(caminho) || chave;
 
     const itens = MENU.filter((i) => (!i.admin || admin) && (!i.staff || equipe));
     const grupos = [...new Set(itens.map((i) => i.grupo))];
@@ -189,6 +208,7 @@
       enquetes: () => window.Enquetes.tela(alvo(), perfil, caminho[1]),
       carteirinha: () => window.Carteirinha.tela(alvo(), perfil),
       ajuda: () => window.Ajuda.tela(alvo(), perfil, caminho),
+      loja: () => window.Loja.tela(alvo(), perfil, caminho),
       respostas: () => (equipe ? window.Atendimento.respostasRapidas(alvo(), perfil) : telaInicio()),
       nova: telaNova,
       notificacoes: telaNotificacoes,
