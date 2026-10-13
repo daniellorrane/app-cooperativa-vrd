@@ -19,6 +19,15 @@
     servico: "Solicitação de serviço",
   };
 
+  const ROTULO_TIPO = {
+    administrador: "Administrador",
+    funcionario: "Funcionário",
+    cooperado: "Cooperado",
+    cliente: "Cliente",
+    fornecedor: "Fornecedor",
+    prestador_servico: "Prestador de serviço",
+  };
+
   // Situações em que o atendimento ainda está em andamento (prazo e responsável contam).
   const ABERTO = ["aberta", "em_andamento"];
 
@@ -114,13 +123,28 @@
     const itens = MENU.filter((i) => (!i.admin || admin) && (!i.staff || equipe));
     const grupos = [...new Set(itens.map((i) => i.grupo))];
 
+    const titulo = MENU.find((i) => i.rota === ativo)?.titulo || "Início";
+    document.body.classList.remove("sem-rolagem");
+
     raiz.className = "conteudo painel";
     raiz.innerHTML = `
+      <header class="barra-painel">
+        <button type="button" class="abrir-menu" aria-controls="menu-principal" aria-expanded="false" aria-label="Abrir menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <strong class="titulo-barra">${esc(titulo)}</strong>
+      </header>
       <div class="casca">
-        <aside class="menu-lateral">
-          <div class="usuario">
-            <strong>${esc(perfil.nome_completo.split(" ")[0])}</strong>
-            <span>${esc(perfil.tipo_acesso.replace("_", " "))}</span>
+        <div class="fundo-menu" hidden></div>
+        <aside class="menu-lateral" id="menu-principal" aria-label="Menu principal">
+          <div class="cabecalho-menu">
+            <div class="usuario">
+              <strong>${esc(perfil.nome_completo.split(" ")[0])}</strong>
+              <span>${esc(ROTULO_TIPO[perfil.tipo_acesso] || perfil.tipo_acesso.replace("_", " "))}</span>
+            </div>
+            <button type="button" class="fechar-menu" aria-label="Fechar menu">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
           </div>
           <nav aria-label="Menu principal">
             ${grupos.map((grupo) => `
@@ -135,6 +159,23 @@
         </aside>
         <section id="conteudo-interno" class="conteudo-interno" aria-live="polite"></section>
       </div>`;
+
+    // Menu deslizante no celular. No computador a barra e o botão ficam ocultos.
+    const casca = raiz.querySelector(".casca");
+    const fundo = raiz.querySelector(".fundo-menu");
+    const botaoAbrir = raiz.querySelector(".abrir-menu");
+    const definirMenu = (aberto) => {
+      casca.classList.toggle("menu-aberto", aberto);
+      botaoAbrir.setAttribute("aria-expanded", String(aberto));
+      fundo.hidden = !aberto;
+      document.body.classList.toggle("sem-rolagem", aberto);
+    };
+    botaoAbrir.addEventListener("click", () => definirMenu(!casca.classList.contains("menu-aberto")));
+    fundo.addEventListener("click", () => definirMenu(false));
+    raiz.querySelector(".fechar-menu").addEventListener("click", () => definirMenu(false));
+    raiz.querySelector(".menu-lateral").addEventListener("click", (e) => {
+      if (e.target.closest("a")) definirMenu(false);
+    });
 
     assinarNotificacoes();
     atualizarContador();

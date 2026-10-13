@@ -266,7 +266,7 @@ form input:disabled { background: var(--fundo); color: var(--cinza); }
 /* Agenda */
 .cabecalho-pagina { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .cabecalho-pagina h1 { margin: 0; }
-.dia-agenda { margin: 20px 0 8px; font-size: 16px; text-transform: capitalize; }
+.dia-agenda { margin: 20px 0 8px; font-size: 16px; }
 .evento { display: flex; gap: 14px; align-items: flex-start; text-decoration: none; color: inherit; }
 .evento:hover { border-color: var(--verde); }
 .evento-hora { min-width: 52px; font-weight: 600; color: var(--verde); }
@@ -425,11 +425,103 @@ form input:disabled { background: var(--fundo); color: var(--cinza); }
 .indicador span { font-size: 14px; color: var(--cinza); }
 a.btn-primario, a.btn-ghost { display: inline-flex; align-items: center; text-decoration: none; }
 
+/* Celular: barra no topo com botão de menu. O menu completo abre em uma gaveta, com os mesmos itens do computador. */
+.barra-painel, .abrir-menu, .fechar-menu, .fundo-menu { display: none; }
+.cabecalho-menu { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cabecalho-menu .usuario { flex: 1; min-width: 0; }
+.sem-rolagem { overflow: hidden; }
+
 @media (max-width: 760px) {
-  .casca { grid-template-columns: 1fr; gap: 16px; }
-  .menu-lateral { position: static; padding: 8px; }
-  .usuario, .grupo-menu { display: none; }
-  .menu-lateral nav { display: flex; gap: 6px; overflow-x: auto; }
-  .item-menu { flex-shrink: 0; min-height: 40px; }
+  .topo { position: static; padding: 10px 16px; }
+  .marca img { width: 30px; height: 30px; }
+  .marca span { display: none; }
+  .conteudo { padding: 16px 16px 40px; }
+  .painel { max-width: none; }
+
+  .barra-painel {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    margin: -16px -16px 16px;
+    padding: 8px 16px;
+    background: var(--branco);
+    border-bottom: 1px solid var(--borda);
+  }
+  .titulo-barra { font-size: 17px; line-height: 1.2; }
+  .abrir-menu,
+  .fechar-menu {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--borda);
+    border-radius: 10px;
+    background: var(--branco);
+    color: var(--texto);
+    cursor: pointer;
+  }
+  .fechar-menu { border: 0; }
+  .abrir-menu svg,
+  .fechar-menu svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+
+  .casca { display: block; }
+  .fundo-menu {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: rgba(20, 30, 25, 0.45);
+  }
+  .menu-lateral {
+    display: block;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    width: min(320px, 88vw);
+    margin: 0;
+    padding: 12px 12px 32px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 0 var(--raio) var(--raio) 0;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.18);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0.2s;
+  }
+  .casca.menu-aberto .menu-lateral { transform: translateX(0); visibility: visible; }
+  .usuario, .grupo-menu { display: block; }
+  .menu-lateral nav { display: block; }
+  .item-menu { min-height: 48px; font-size: 16px; }
+
+  .conteudo-interno { width: 100%; }
+  h1 { font-size: 20px; }
+  .cartao { padding: 18px; }
+  .cabecalho-pagina { flex-direction: column; align-items: stretch; }
+  .cabecalho-pagina .btn-primario { width: 100%; text-align: center; justify-content: center; }
+  .acoes-evento > * { flex: 1 1 100%; text-align: center; justify-content: center; }
+  form .btn-primario,
+  form .btn-perigo { width: 100%; }
+  .indicadores { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .indicador strong { font-size: 24px; }
+  .carteirinha-corpo { flex-direction: column; text-align: center; }
+  .carteirinha-qr { margin: 0 auto; }
+  .carteirinha-dados { width: 100%; }
+  .form-mensagem { flex-direction: column; align-items: stretch; }
+  .form-mensagem button { width: 100%; }
+  .msg { max-width: 92%; }
   .item-menu .badge { margin-left: 2px; }
 }

@@ -20,7 +20,8 @@ window.Agenda = (() => {
   }
 
   function diaTitulo(valor) {
-    return new Date(valor).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    const texto = new Date(valor).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    return texto.charAt(0).toUpperCase() + texto.slice(1);
   }
 
   function chaveDia(valor) {
