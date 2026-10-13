@@ -91,7 +91,7 @@ window.Loja = (() => {
         <span class="loja-foto">${foto(p.imagem_caminho, p.nome)}</span>
         <span class="loja-texto">
           <strong>${esc(p.nome)}</strong>
-          ${precoHtml(p)}
+          ${p.tem_variacoes ? `<span class="loja-preco">A partir de ${reais(p.preco_centavos)}</span>` : precoHtml(p)}
           <span>${avaliacao}</span>
           ${p.motivo ? `<span class="ajuda">${esc(p.motivo)}</span>` : ""}
           ${p.estoque === 0 ? '<span class="marcas"><span class="marca">Esgotado</span></span>' : ""}
@@ -199,13 +199,26 @@ window.Loja = (() => {
       return;
     }
 
+    // Variações: o grupo é o produto principal e suas variações (a própria página, se for variação).
+    const idPrincipal = p.variacao_de ?? p.id;
+    let grupoQuery = sb().from("loja_produtos")
+      .select("id, nome, variacao_rotulo, preco_centavos, preco_promo_centavos, estoque, ativo")
+      .eq("variacao_de", idPrincipal)
+      .order("variacao_rotulo");
+    if (!ehAdmin(perfil)) grupoQuery = grupoQuery.eq("ativo", true);
+    const { data: grupoDados } = await grupoQuery;
+    const grupo = grupoDados || [];
+    const temVariacoes = !p.variacao_de && grupo.length > 0;
+    const minimoGrupo = grupo.filter((v) => v.ativo).map((v) => v.preco_promo_centavos ?? v.preco_centavos);
+    const nomePrincipal = p.variacao_de ? p.nome.replace(/ \([^()]*\)$/, "") : p.nome;
+
     const publicadas = (todas || []).filter((a) => a.status === "publicada");
     const media = publicadas.length
       ? publicadas.reduce((soma, a) => soma + a.nota, 0) / publicadas.length
       : null;
     const minha = (todas || []).find((a) => a.usuario_id === perfil.id);
     const admin = ehAdmin(perfil);
-    const disponivel = p.ativo && p.estoque > 0;
+    const disponivel = !temVariacoes && p.ativo && p.estoque > 0;
     const maximo = maximoNoCarrinho(p);
     const qtdNoCarrinho = noCarrinho?.quantidade || 0;
     const categoriaNome = p.loja_categorias?.nome;
@@ -257,8 +270,21 @@ window.Loja = (() => {
           ${categoriaNome ? `<p class="ajuda">${esc(categoriaNome)}</p>` : ""}
           <h1>${esc(p.nome)}</h1>
           <p>${media ? `${estrelas(media)} <span>${numeroPt(media.toFixed(1))} de 5 · ${publicadas.length} avaliação(ões)</span>` : '<span class="ajuda">Sem avaliações ainda</span>'}</p>
-          ${precoHtml(p)}
-          <p class="marcas">${p.estoque === 0 ? '<span class="marca">Esgotado</span>' : `<span class="marca">${p.estoque <= 5 ? `Últimas ${p.estoque} unidades` : "Em estoque"}</span>`}</p>
+          ${temVariacoes
+            ? `<p class="loja-preco">${minimoGrupo.length ? `A partir de ${reais(Math.min(...minimoGrupo))}` : "Sem opções disponíveis"}</p>`
+            : precoHtml(p)}
+          <p class="marcas">${(temVariacoes ? !grupo.some((v) => v.ativo && v.estoque > 0) : p.estoque === 0)
+            ? '<span class="marca">Esgotado</span>'
+            : `<span class="marca">${!temVariacoes && p.estoque <= 5 ? `Últimas ${p.estoque} unidades` : "Em estoque"}</span>`}</p>
+
+          ${grupo.length ? `
+            <div class="seletor-variacoes">
+              <p class="ajuda">${temVariacoes ? "Escolha uma opção:" : `Outras opções de ${esc(nomePrincipal)}:`}</p>
+              <div class="chips" role="group" aria-label="Opções do produto">
+                ${grupo.map((v) => `<a class="chip" href="#loja/produto/${esc(v.id)}" aria-pressed="${v.id === p.id ? "true" : "false"}">${esc(v.variacao_rotulo || v.nome)}${v.estoque === 0 ? " · esgotado" : ""}</a>`).join("")}
+              </div>
+            </div>` : ""}
+          ${temVariacoes ? '<p class="ajuda">Escolha uma opção acima para comprar.</p>' : ""}
 
           ${disponivel
             ? `<form id="form-carrinho" class="formulario">
@@ -370,7 +396,12 @@ window.Loja = (() => {
         nota,
         comentario: String(f.get("comentario") || "").trim() || null,
       });
-      if (error) return erroNa(alvo, error.message);
+      if (error) {
+        const naoComprou = /row-level security/i.test(error.message);
+        return erroNa(alvo, naoComprou
+          ? "Só quem comprou este produto pode avaliar. Depois da compra paga, a avaliação fica disponível."
+          : error.message);
+      }
       produto(alvo, perfil, p.id);
     });
 
@@ -805,11 +836,14 @@ window.Loja = (() => {
 
   async function formularioProduto(alvo, perfil, id) {
     carregando(alvo);
-    const [{ data: categorias }, { data: atual, error }] = await Promise.all([
+    const [{ data: categorias }, { data: atual, error }, { data: variacoes }] = await Promise.all([
       sb().from("loja_categorias").select("id, nome").order("ordem").order("nome"),
       id
         ? sb().from("loja_produtos").select("*").eq("id", id).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
+      id
+        ? sb().from("loja_produtos").select("id, nome, variacao_rotulo, preco_centavos, preco_promo_centavos, estoque, ativo").eq("variacao_de", id).order("variacao_rotulo")
+        : Promise.resolve({ data: [] }),
     ]);
 
     if (error || (id && !atual)) {
@@ -818,14 +852,47 @@ window.Loja = (() => {
     }
 
     const reaisParaCampo = (c) => (Number(c) / 100).toFixed(2).replace(".", ",");
+    const ehVariacao = !!atual?.variacao_de;
+    const campoNome = ehVariacao
+      ? `<label>Nome da variação <small>(ex.: P / Azul). O nome do produto principal é usado junto.</small>
+           <input type="text" name="rotulo" required maxlength="60" value="${esc(atual?.variacao_rotulo || "")}" />
+         </label>`
+      : `<label>Nome
+           <input type="text" name="nome" required minlength="3" maxlength="150" value="${esc(atual?.nome || "")}" />
+         </label>`;
+    const blocoVariacoes = atual && !ehVariacao
+      ? `<section class="cartao">
+           <h2>Variações</h2>
+           <p class="ajuda">Use variações para tamanhos, cores ou modelos. Cada variação tem preço, estoque e foto próprios. Quando há variações, o cooperado escolhe uma delas.</p>
+           ${(variacoes || []).length
+             ? `<div class="lista">${variacoes.map((v) => `
+                  <a class="item evento" href="#loja/gerenciar/${esc(v.id)}">
+                    <strong>${esc(v.variacao_rotulo || v.nome)}</strong>
+                    <span class="ajuda">${reais(v.preco_promo_centavos ?? v.preco_centavos)} · estoque ${Number(v.estoque)}${v.ativo ? "" : " · oculta"}</span>
+                  </a>`).join("")}</div>`
+             : '<p class="ajuda">Este produto ainda não tem variações.</p>'}
+           <h3>Nova variação</h3>
+           <form id="form-variacao" class="formulario" novalidate>
+             <label>Nome da variação <small>(ex.: P / Azul)</small>
+               <input type="text" name="rotulo" maxlength="60" />
+             </label>
+             <div class="linha-campos">
+               <label>Preço (R$) <input type="text" name="preco" inputmode="decimal" placeholder="Ex.: 129,90" /></label>
+               <label>Promoção (R$) <small>(opcional)</small> <input type="text" name="promo" inputmode="decimal" /></label>
+             </div>
+             <label>Estoque <input type="number" name="estoque" min="0" max="1000000" step="1" value="0" /></label>
+             <label class="opcao"><input type="checkbox" name="ativo" checked /> <span>Publicada</span></label>
+             <button type="submit" class="btn-ghost">Adicionar variação</button>
+           </form>
+         </section>`
+      : "";
 
     alvo.innerHTML = `
       <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
       <h1>${atual ? "Editar produto" : "Novo produto"}</h1>
+      ${ehVariacao ? `<p class="ajuda">Variação de <strong>${esc(atual.nome.replace(/ \([^()]*\)$/, ""))}</strong>. <a href="#loja/gerenciar/${esc(atual.variacao_de)}">Voltar ao produto principal</a></p>` : ""}
       <form id="form-produto" class="formulario" novalidate>
-        <label>Nome
-          <input type="text" name="nome" required minlength="3" maxlength="150" value="${esc(atual?.nome || "")}" />
-        </label>
+        ${campoNome}
         <label>Descrição
           <textarea name="descricao" rows="6" maxlength="4000">${esc(atual?.descricao || "")}</textarea>
         </label>
@@ -834,6 +901,9 @@ window.Loja = (() => {
             <option value="">Sem categoria</option>
             ${(categorias || []).map((c) => `<option value="${esc(c.id)}" ${atual?.categoria_id === c.id ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}
           </select>
+        </label>
+        <label>NCM <small>(8 números; obrigatório para emitir nota fiscal)</small>
+          <input type="text" name="ncm" inputmode="numeric" maxlength="8" placeholder="Ex.: 73239300" value="${esc(atual?.ncm || "")}" />
         </label>
         <label>Preço (R$)
           <input type="text" name="preco" inputmode="decimal" required placeholder="Ex.: 129,90" value="${atual ? reaisParaCampo(atual.preco_centavos) : ""}" />
@@ -861,7 +931,8 @@ window.Loja = (() => {
         </label>
         ${ERRO_GERAL}
         <button type="submit" class="btn-primario">Salvar produto</button>
-      </form>`;
+      </form>
+      ${blocoVariacoes}`;
 
     const form = document.getElementById("form-produto");
     const mostraErro = (mensagem) => erroNa(alvo, mensagem);
@@ -869,13 +940,17 @@ window.Loja = (() => {
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const f = new FormData(form);
-      const nome = String(f.get("nome") || "").trim();
+      const nome = ehVariacao ? atual.nome : String(f.get("nome") || "").trim();
+      const rotulo = ehVariacao ? String(f.get("rotulo") || "").trim() : null;
       const preco = parseReais(f.get("preco"));
       const promoTexto = String(f.get("promo") || "").trim();
       const promo = promoTexto ? parseReais(promoTexto) : null;
       const estoque = Number(f.get("estoque"));
       const arquivo = f.get("foto");
+      const ncmTexto = String(f.get("ncm") || "").replace(/\D/g, "");
 
+      if (ehVariacao && !rotulo) return mostraErro("Informe o nome da variação, por exemplo P / Azul.");
+      if (ncmTexto && ncmTexto.length !== 8) return mostraErro("O NCM precisa ter 8 números.");
       if (nome.length < 3) return mostraErro("O nome precisa ter pelo menos 3 letras.");
       if (!Number.isFinite(preco) || preco < 1) return mostraErro("Informe um preço válido, por exemplo 129,90.");
       if (promoTexto && (!Number.isFinite(promo) || promo < 1)) return mostraErro("Informe um preço promocional válido.");
@@ -920,7 +995,31 @@ window.Loja = (() => {
         altura_cm: numeroOuNulo(f.get("altura_cm")),
         largura_cm: numeroOuNulo(f.get("largura_cm")),
         comprimento_cm: numeroOuNulo(f.get("comprimento_cm")),
+        ncm: ncmTexto || null,
       };
+
+      // Variação: nome, preço, estoque e situação passam pela função própria, que monta o nome completo.
+      if (ehVariacao) {
+        const { error: falhaVariacao } = await sb().rpc("salvar_variacao_loja", {
+          p_pai: atual.variacao_de,
+          p_id: atual.id,
+          p_rotulo: rotulo,
+          p_preco: preco,
+          p_promo: promo,
+          p_estoque: estoque,
+          p_ativo: f.has("ativo"),
+        });
+        if (falhaVariacao) {
+          botao.disabled = false;
+          if (novaFoto) await sb().storage.from("loja-fotos").remove([caminho]);
+          return mostraErro(falhaVariacao.message);
+        }
+        delete dados.nome;
+        delete dados.preco_centavos;
+        delete dados.preco_promo_centavos;
+        delete dados.estoque;
+        delete dados.ativo;
+      }
 
       const resposta = atual
         ? await sb().from("loja_produtos").update(dados).eq("id", produtoId)
@@ -934,6 +1033,36 @@ window.Loja = (() => {
 
       if (caminhoAntigo) await sb().storage.from("loja-fotos").remove([caminhoAntigo]);
       location.hash = "#loja/gerenciar";
+    });
+
+    alvo.querySelector("#form-variacao")?.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(ev.currentTarget);
+      const rotuloNovo = String(f.get("rotulo") || "").trim();
+      const precoNovo = parseReais(f.get("preco"));
+      const promoTexto = String(f.get("promo") || "").trim();
+      const promoNovo = promoTexto ? parseReais(promoTexto) : null;
+      const estoqueNovo = Number(f.get("estoque"));
+
+      if (!rotuloNovo) return mostraErro("Informe o nome da variação, por exemplo P / Azul.");
+      if (!Number.isFinite(precoNovo) || precoNovo < 1) return mostraErro("Informe o preço da variação, por exemplo 129,90.");
+      if (promoTexto && (!Number.isFinite(promoNovo) || promoNovo < 1)) return mostraErro("Informe a promoção no formato 99,90.");
+      if (!Number.isInteger(estoqueNovo) || estoqueNovo < 0) return mostraErro("O estoque precisa ser um número inteiro, zero ou maior.");
+
+      const botao = ev.currentTarget.querySelector("button[type=submit]");
+      botao.disabled = true;
+      const { error: falha } = await sb().rpc("salvar_variacao_loja", {
+        p_pai: atual.id,
+        p_id: null,
+        p_rotulo: rotuloNovo,
+        p_preco: precoNovo,
+        p_promo: promoNovo,
+        p_estoque: estoqueNovo,
+        p_ativo: f.has("ativo"),
+      });
+      botao.disabled = false;
+      if (falha) return mostraErro(falha.message);
+      formularioProduto(alvo, perfil, atual.id);
     });
   }
 
@@ -976,7 +1105,7 @@ window.Loja = (() => {
     carregando(alvo);
     const [{ data: p, error }, { data: config }, { data: devolucao }] = await Promise.all([
       sb().from("pedidos")
-        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
+        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, nf_status, nf_numero, nf_chave, nf_danfe, nf_erro, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
         .eq("id", id).maybeSingle(),
       sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
       sb().from("devolucoes_loja").select("id, tipo, motivo, status, observacao_admin").eq("pedido_id", id).maybeSingle(),
@@ -1030,6 +1159,38 @@ window.Loja = (() => {
            </section>`
         : "";
 
+    // Nota fiscal: o cooperado vê o número e o DANFE; o administrador também emite, consulta e cancela.
+    const NOTA_STATUS = { processando: "Em processamento", autorizada: "Autorizada", erro: "Com erro", cancelada: "Cancelada" };
+    const statusComNota = ["pago", "em_separacao", "pronto_retirada", "retirado", "enviado", "entregue"];
+    const danfe = p.nf_danfe && /^https:\/\//.test(p.nf_danfe) ? p.nf_danfe : null;
+    const admin = ehAdmin(perfil);
+    const blocoNotaCooperado = !admin && p.nf_status === "autorizada"
+      ? `<section class="cartao">
+           <h2>Nota fiscal</h2>
+           <p>Nota nº <strong>${esc(p.nf_numero || "")}</strong></p>
+           ${danfe ? `<p><a class="btn-ghost" href="${esc(danfe)}" target="_blank" rel="noopener">Ver DANFE (PDF)</a></p>` : ""}
+         </section>`
+      : "";
+    const blocoNotaAdmin = admin && statusComNota.includes(p.status)
+      ? `<section class="cartao" id="bloco-nota">
+           <h2>Nota fiscal</h2>
+           <p>Situação: <strong>${esc(NOTA_STATUS[p.nf_status] || "Não emitida")}</strong></p>
+           ${p.nf_numero ? `<p>Número: ${esc(p.nf_numero)}</p>` : ""}
+           ${p.nf_chave ? `<p class="ajuda texto-puro">Chave: ${esc(p.nf_chave)}</p>` : ""}
+           ${p.nf_erro ? `<p class="erro">${esc(p.nf_erro)}</p>` : ""}
+           ${danfe ? `<p><a class="btn-ghost" href="${esc(danfe)}" target="_blank" rel="noopener">Ver DANFE (PDF)</a></p>` : ""}
+           <div class="acoes-evento">
+             ${p.nf_status !== "autorizada" && p.nf_status !== "processando"
+               ? '<button type="button" class="btn-primario" data-nota="emitir">Emitir nota</button>' : ""}
+             ${p.nf_status === "processando" || p.nf_status === "erro"
+               ? '<button type="button" class="btn-ghost" data-nota="consultar">Consultar situação</button>' : ""}
+             ${p.nf_status === "autorizada"
+               ? '<button type="button" class="btn-ghost" data-nota="cancelar">Cancelar nota</button>' : ""}
+           </div>
+           <p class="ajuda">A nota só pode ser cancelada dentro do prazo permitido pela Receita do estado, que pode variar. Confirme com o contador.</p>
+         </section>`
+      : "";
+
     const blocoEntrega = retirada
       ? `<section class="cartao">
            <h2>Retirada na cooperativa</h2>
@@ -1068,6 +1229,8 @@ window.Loja = (() => {
       </section>
       ${blocoEntrega}
       ${blocoDevolucao}
+      ${blocoNotaCooperado}
+      ${blocoNotaAdmin}
       ${aberto
         ? `<section class="cartao">
              <p>Pague até ${dataHora(p.expira_em)}. Depois desse prazo, o pedido é cancelado e os produtos voltam ao estoque.</p>
@@ -1113,6 +1276,32 @@ window.Loja = (() => {
       const { error: falha } = await sb().rpc("cancelar_pedido_loja", { p_pedido: p.id });
       if (falha) return erroNa(alvo, falha.message);
       location.hash = "#loja/pedidos";
+    });
+
+    alvo.querySelectorAll("[data-nota]").forEach((botao) => {
+      botao.addEventListener("click", async () => {
+        const acao = botao.dataset.nota;
+        let justificativa;
+        if (acao === "cancelar") {
+          justificativa = (prompt("Motivo do cancelamento da nota (mínimo de 15 letras):") || "").trim();
+          if (justificativa.length < 15) return erroNa(alvo, "A justificativa do cancelamento precisa ter pelo menos 15 letras.");
+          if (!confirm("Cancelar a nota fiscal deste pedido na Receita?")) return;
+        }
+        const botoes = alvo.querySelectorAll("[data-nota]");
+        botoes.forEach((b) => { b.disabled = true; });
+        const { data, error: falha } = await sb().functions.invoke("loja-nota-fiscal", {
+          body: { pedido_id: p.id, acao, ...(justificativa ? { justificativa } : {}) },
+        });
+        botoes.forEach((b) => { b.disabled = false; });
+        if (falha) return erroNa(alvo, await mensagemFuncao(falha));
+        const mensagens = {
+          emitir: "Nota enviada para emissão. A situação será atualizada.",
+          consultar: "Situação da nota atualizada.",
+          cancelar: "Nota cancelada.",
+        };
+        await pedido(alvo, perfil, p.id, false);
+        avisoNa(alvo, data?.mensagem || mensagens[acao]);
+      });
     });
 
     // Depois de voltar do Mercado Pago, espera a confirmação chegar (até 1 minuto).
@@ -1334,6 +1523,52 @@ window.Loja = (() => {
           <input type="text" name="melhor_envio_token" autocomplete="off" spellcheck="false" maxlength="2000"
             placeholder="${situacao?.melhor_envio_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Melhor Envio"}" />
         </label>
+        <h2>Nota fiscal (Focus NFe)</h2>
+        <p class="ajuda">Preencha com os dados da cooperativa. Os campos tributários precisam ser confirmados pelo contador antes da primeira nota real. Comece sempre pelo ambiente de teste (homologação).</p>
+        <label>Emissão de nota fiscal
+          <select name="fiscal_ativo">
+            <option value="nao" ${selecionado(v.fiscal_ativo === "sim" ? "sim" : "nao", "nao")}>Desligada</option>
+            <option value="sim" ${selecionado(v.fiscal_ativo === "sim" ? "sim" : "nao", "sim")}>Ligada</option>
+          </select>
+        </label>
+        <label>Ambiente
+          <select name="fiscal_ambiente">
+            <option value="homologacao" ${selecionado(v.fiscal_ambiente === "producao" ? "producao" : "homologacao", "homologacao")}>Teste (homologação)</option>
+            <option value="producao" ${selecionado(v.fiscal_ambiente === "producao" ? "producao" : "homologacao", "producao")}>Produção</option>
+          </select>
+        </label>
+        <label>Token do Focus NFe <small>(${situacao?.focus_nfe_token ? "configurado" : "não configurado"})</small>
+          <input type="text" name="focus_nfe_token" autocomplete="off" spellcheck="false" maxlength="300"
+            placeholder="${situacao?.focus_nfe_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Focus NFe"}" />
+        </label>
+        <label>CNPJ da cooperativa <input type="text" name="fiscal_cnpj" inputmode="numeric" maxlength="18" value="${esc(v.fiscal_cnpj || "")}" /></label>
+        <label>Razão social <input type="text" name="fiscal_razao_social" maxlength="120" value="${esc(v.fiscal_razao_social || "")}" /></label>
+        <label>Inscrição estadual <input type="text" name="fiscal_ie" maxlength="20" value="${esc(v.fiscal_ie || "")}" /></label>
+        <label>Regime tributário
+          <select name="fiscal_regime">
+            <option value="simples" ${selecionado(v.fiscal_regime === "normal" ? "normal" : "simples", "simples")}>Simples Nacional</option>
+            <option value="normal" ${selecionado(v.fiscal_regime === "normal" ? "normal" : "simples", "normal")}>Regime normal (lucro presumido ou real)</option>
+          </select>
+        </label>
+        <div class="linha-campos">
+          <label>Logradouro <input type="text" name="fiscal_logradouro" maxlength="120" value="${esc(v.fiscal_logradouro || "")}" /></label>
+          <label>Número <input type="text" name="fiscal_numero" maxlength="10" value="${esc(v.fiscal_numero || "")}" /></label>
+        </div>
+        <label>Bairro <input type="text" name="fiscal_bairro" maxlength="60" value="${esc(v.fiscal_bairro || "")}" /></label>
+        <div class="linha-campos">
+          <label>Município <input type="text" name="fiscal_municipio" maxlength="60" value="${esc(v.fiscal_municipio || "")}" /></label>
+          <label>UF <input type="text" name="fiscal_uf" maxlength="2" value="${esc(v.fiscal_uf || "")}" /></label>
+        </div>
+        <label>CEP <input type="text" name="fiscal_cep" inputmode="numeric" maxlength="9" value="${esc(v.fiscal_cep || "")}" /></label>
+        <label>Natureza da operação <input type="text" name="fiscal_natureza_operacao" maxlength="60" value="${esc(v.fiscal_natureza_operacao || "Venda de mercadoria")}" /></label>
+        <label>CFOP <small>(venda dentro do estado: 5102)</small> <input type="text" name="fiscal_cfop" maxlength="4" value="${esc(v.fiscal_cfop || "")}" /></label>
+        <label>CSOSN <small>(só Simples Nacional, ex.: 102)</small> <input type="text" name="fiscal_csosn" maxlength="3" value="${esc(v.fiscal_csosn || "")}" /></label>
+        <label>CST do ICMS <small>(só regime normal, ex.: 00)</small> <input type="text" name="fiscal_cst_icms" maxlength="3" value="${esc(v.fiscal_cst_icms || "")}" /></label>
+        <label>Alíquota do ICMS (%) <small>(só regime normal)</small> <input type="text" name="fiscal_icms_aliquota" inputmode="decimal" maxlength="6" value="${esc(v.fiscal_icms_aliquota || "")}" /></label>
+        <label>Origem da mercadoria <small>(0 = nacional)</small> <input type="text" name="fiscal_origem" maxlength="1" value="${esc(v.fiscal_origem || "0")}" /></label>
+        <label>CST do PIS <input type="text" name="fiscal_cst_pis" maxlength="2" value="${esc(v.fiscal_cst_pis || "07")}" /></label>
+        <label>CST da COFINS <input type="text" name="fiscal_cst_cofins" maxlength="2" value="${esc(v.fiscal_cst_cofins || "07")}" /></label>
+
         <button type="submit" class="btn-primario">Salvar configurações</button>
       </form>`;
 
@@ -1369,6 +1604,10 @@ window.Loja = (() => {
       const campos = [
         "nome_loja", "endereco_retirada", "horario_retirada", "minutos_expiracao_pedido",
         "url_publica_app", "mp_public_key", "entrega_local_ativa", "entrega_local_ceps", "melhor_envio_sandbox",
+        "fiscal_ativo", "fiscal_ambiente", "fiscal_cnpj", "fiscal_razao_social", "fiscal_ie", "fiscal_regime",
+        "fiscal_logradouro", "fiscal_numero", "fiscal_bairro", "fiscal_municipio", "fiscal_uf", "fiscal_cep",
+        "fiscal_natureza_operacao", "fiscal_cfop", "fiscal_csosn", "fiscal_cst_icms", "fiscal_icms_aliquota",
+        "fiscal_origem", "fiscal_cst_pis", "fiscal_cst_cofins",
       ];
       const linhasSalvar = campos.map((chave) => ({ chave, valor: String(f.get(chave) || "").trim(), atualizado_em: new Date().toISOString() }));
       linhasSalvar.push({ chave: "cep_origem", valor: cepOrigem, atualizado_em: new Date().toISOString() });
@@ -1380,7 +1619,7 @@ window.Loja = (() => {
         return erroNa(alvo, falha.message);
       }
 
-      for (const nome of ["mp_access_token", "mp_webhook_secret", "melhor_envio_token"]) {
+      for (const nome of ["mp_access_token", "mp_webhook_secret", "melhor_envio_token", "focus_nfe_token"]) {
         const valor = String(f.get(nome) || "").trim();
         if (!valor) continue;
         const { error: falhaSegredo } = await sb().rpc("salvar_segredo_loja", { p_nome: nome, p_valor: valor });
