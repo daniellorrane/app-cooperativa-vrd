@@ -609,3 +609,6 @@ grant execute on function public.minhas_indicacoes_loja() to authenticated;
 revoke all on function privado.checar_cupom(text, uuid, integer, boolean) from public, anon, authenticated;
 revoke all on function privado.subtotal_carrinho(uuid) from public, anon, authenticated;
 revoke all on function privado.desconto_cupom(public.cupons_loja, integer) from public, anon, authenticated;
+
+-- 6. AJUSTE PÓS-ADVISOR: função de cálculo do cupom com search_path fixo.
+alter function privado.desconto_cupom(public.cupons_loja, integer) set search_path = public, privado;
