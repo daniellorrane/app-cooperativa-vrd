@@ -1168,11 +1168,13 @@ window.Loja = (() => {
         <label>Chave pública
           <input type="text" name="mp_public_key" maxlength="200" value="${esc(v.mp_public_key || "")}" />
         </label>
-        <label>Token de acesso <small>(${situacaoTexto(situacao?.mp_access_token)}; preencha só para trocar)</small>
-          <input type="password" name="mp_access_token" autocomplete="off" maxlength="300" />
+        <label>Token de acesso <small>(${situacaoTexto(situacao?.mp_access_token)})</small>
+          <input type="text" name="mp_access_token" autocomplete="off" spellcheck="false" maxlength="300"
+            placeholder="${situacao?.mp_access_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token de acesso"}" />
         </label>
-        <label>Chave secreta do webhook <small>(${situacaoTexto(situacao?.mp_webhook_secret)}; preencha só para trocar)</small>
-          <input type="password" name="mp_webhook_secret" autocomplete="off" maxlength="300" />
+        <label>Chave secreta do webhook <small>(${situacaoTexto(situacao?.mp_webhook_secret)})</small>
+          <input type="text" name="mp_webhook_secret" autocomplete="off" spellcheck="false" maxlength="300"
+            placeholder="${situacao?.mp_webhook_secret ? "Configurada. Digite uma nova chave só para trocar" : "Cole a chave secreta do webhook"}" />
         </label>
         <p class="ajuda">Endereço de notificação para cadastrar no Mercado Pago:<br />
           <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-pagamento-webhook</code></p>
