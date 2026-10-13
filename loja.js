@@ -730,6 +730,8 @@ window.Loja = (() => {
         <div class="acoes-evento">
           <a class="btn-ghost" href="#loja/gerenciar/pedidos">Pedidos</a>
           <a class="btn-ghost" href="#loja/gerenciar/cupons">Cupons</a>
+          <a class="btn-ghost" href="#loja/gerenciar/devolucoes">Devoluções</a>
+          <a class="btn-ghost" href="#loja/gerenciar/relatorios">Relatórios</a>
           <a class="btn-ghost" href="#loja/gerenciar/pagamento">Pagamento e configurações</a>
           <a class="btn-primario" href="#loja/gerenciar/novo">Novo produto</a>
         </div>
@@ -972,11 +974,12 @@ window.Loja = (() => {
 
   async function pedido(alvo, perfil, id, retorno) {
     carregando(alvo);
-    const [{ data: p, error }, { data: config }] = await Promise.all([
+    const [{ data: p, error }, { data: config }, { data: devolucao }] = await Promise.all([
       sb().from("pedidos")
-        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
+        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
         .eq("id", id).maybeSingle(),
       sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
+      sb().from("devolucoes_loja").select("id, tipo, motivo, status, observacao_admin").eq("pedido_id", id).maybeSingle(),
     ]);
 
     let aviso = "";
@@ -996,6 +999,36 @@ window.Loja = (() => {
     const itens = p.pedido_itens || [];
     const retirada = p.metodo_entrega === "retirada";
     const e = p.endereco;
+
+    // Devolução: pedido já feito, ou formulário para pedir (o servidor confere o prazo).
+    const podePedirDevolucao = !devolucao && (p.status === "entregue" || p.status === "retirado") && p.entregue_em;
+    const blocoDevolucao = devolucao
+      ? `<section class="cartao">
+           <h2>Devolução</h2>
+           <p><strong>${esc(DEVOLUCAO_STATUS[devolucao.status] || devolucao.status)}</strong></p>
+           <p class="texto-puro">${esc(devolucao.motivo)}</p>
+           ${devolucao.status === "aprovada" ? `<p class="ajuda">Envie ou leve o produto para: ${esc(cfg.endereco_retirada || "o endereço informado pela cooperativa")}. Guarde o comprovante de envio.</p>` : ""}
+           ${devolucao.observacao_admin ? `<p class="ajuda">Observação da loja: ${esc(devolucao.observacao_admin)}</p>` : ""}
+         </section>`
+      : podePedirDevolucao
+        ? `<section class="cartao">
+             <h2>Pedir devolução</h2>
+             <p class="ajuda">Arrependimento: até 7 dias depois da entrega. Defeito ou troca: até 30 dias.</p>
+             <form id="form-devolucao" class="formulario" novalidate>
+               <label>Tipo
+                 <select name="tipo">
+                   <option value="arrependimento">Arrependimento (desisti da compra)</option>
+                   <option value="defeito">Defeito ou produto errado</option>
+                   <option value="troca">Troca</option>
+                 </select>
+               </label>
+               <label>Motivo <small>(conte o que aconteceu)</small>
+                 <textarea name="motivo" rows="3" maxlength="500" required></textarea>
+               </label>
+               <button type="submit" class="btn-ghost">Enviar pedido de devolução</button>
+             </form>
+           </section>`
+        : "";
 
     const blocoEntrega = retirada
       ? `<section class="cartao">
@@ -1034,6 +1067,7 @@ window.Loja = (() => {
         <p><strong>Total: ${reais(p.total_centavos)}</strong></p>
       </section>
       ${blocoEntrega}
+      ${blocoDevolucao}
       ${aberto
         ? `<section class="cartao">
              <p>Pague até ${dataHora(p.expira_em)}. Depois desse prazo, o pedido é cancelado e os produtos voltam ao estoque.</p>
@@ -1053,6 +1087,25 @@ window.Loja = (() => {
         return erroNa(alvo, erro || "Pagamento indisponível.");
       }
       window.location.href = url;
+    });
+
+    alvo.querySelector("#form-devolucao")?.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(ev.currentTarget);
+      const motivo = String(f.get("motivo") || "").trim();
+      if (motivo.length < 5) return erroNa(alvo, "Conte o motivo com pelo menos 5 letras.");
+      const botao = ev.currentTarget.querySelector("button[type=submit]");
+      botao.disabled = true;
+      const { error: falha } = await sb().rpc("solicitar_devolucao_loja", {
+        p_pedido: p.id,
+        p_tipo: String(f.get("tipo")),
+        p_motivo: motivo,
+      });
+      if (falha) {
+        botao.disabled = false;
+        return erroNa(alvo, falha.message);
+      }
+      pedido(alvo, perfil, p.id, false);
     });
 
     alvo.querySelector("#cancelar")?.addEventListener("click", async () => {
@@ -1746,6 +1799,173 @@ window.Loja = (() => {
     });
   }
 
+  // ---------- Devoluções ----------
+
+  const DEVOLUCAO_STATUS = {
+    solicitada: "Em análise",
+    aprovada: "Aprovada: aguardando o produto",
+    recusada: "Recusada",
+    recebida: "Produto recebido: reembolso pendente",
+    reembolsada: "Reembolsado",
+  };
+  const TIPO_DEVOLUCAO = { arrependimento: "Arrependimento", defeito: "Defeito", troca: "Troca" };
+
+  async function devolucoesAdmin(alvo) {
+    carregando(alvo);
+    const { data, error } = await sb().from("devolucoes_loja")
+      .select("id, tipo, motivo, status, observacao_admin, criado_em, pedido:pedidos(codigo, total_centavos, mp_pagamento_id, mp_status)")
+      .order("criado_em", { ascending: false });
+    if (error) {
+      alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+
+    const lista = data || [];
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <h1>Devoluções</h1>
+      <p class="ajuda">Aprove ou recuse o pedido, marque o produto como recebido e faça o reembolso pelo Mercado Pago. O estoque volta ao receber o produto.</p>
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      ${lista.length
+        ? `<div class="lista">
+             ${lista.map((d) => {
+               const acoes = [];
+               if (d.status === "solicitada") {
+                 acoes.push('<button type="button" class="btn-primario" data-acao="aprovar">Aprovar</button>');
+                 acoes.push('<button type="button" class="btn-perigo" data-acao="recusar">Recusar</button>');
+               }
+               if (d.status === "aprovada") acoes.push('<button type="button" class="btn-ghost" data-acao="recebida">Marcar como recebida</button>');
+               if ((d.status === "aprovada" || d.status === "recebida") && d.tipo !== "troca") {
+                 acoes.push('<button type="button" class="btn-primario" data-acao="reembolsar">Reembolsar</button>');
+               }
+               return `
+                 <article class="item" data-devolucao="${esc(d.id)}">
+                   <strong>${esc(d.pedido?.codigo || "Pedido")} · ${esc(TIPO_DEVOLUCAO[d.tipo] || d.tipo)}</strong>
+                   <span class="marcas"><span class="marca">${esc(DEVOLUCAO_STATUS[d.status] || d.status)}</span></span>
+                   <span class="ajuda">Motivo: ${esc(d.motivo)}</span>
+                   ${d.pedido ? `<span class="ajuda">Valor do pedido: ${reais(d.pedido.total_centavos)}${d.pedido.mp_pagamento_id ? "" : " · sem pagamento registrado no Mercado Pago"}</span>` : ""}
+                   ${d.observacao_admin ? `<span class="ajuda">Observação: ${esc(d.observacao_admin)}</span>` : ""}
+                   ${acoes.length ? `<div class="acoes-evento">${acoes.join("")}</div>` : ""}
+                 </article>`;
+             }).join("")}
+           </div>`
+        : '<p class="ajuda">Nenhuma devolução por enquanto.</p>'}`;
+
+    alvo.querySelectorAll("[data-acao]").forEach((botao) => {
+      botao.addEventListener("click", async () => {
+        const id = botao.closest("[data-devolucao]").dataset.devolucao;
+        const acao = botao.dataset.acao;
+
+        if (acao === "reembolsar") {
+          if (!confirm("Reembolsar o valor total deste pedido pelo Mercado Pago?")) return;
+          botao.disabled = true;
+          const { error: falha } = await sb().functions.invoke("loja-reembolso", { body: { devolucao_id: id } });
+          if (falha) {
+            botao.disabled = false;
+            return erroNa(alvo, await mensagemFuncao(falha));
+          }
+          await devolucoesAdmin(alvo);
+          return avisoNa(alvo, "Reembolso enviado ao Mercado Pago.");
+        }
+
+        let observacao = null;
+        if (acao === "recusar") {
+          observacao = prompt("Motivo da recusa (o cooperado vê este texto):");
+          if (!observacao || !observacao.trim()) return;
+        }
+
+        botao.disabled = true;
+        const { error: falha } = await sb().rpc("decidir_devolucao_loja", {
+          p_devolucao: id,
+          p_acao: acao,
+          p_observacao: observacao,
+        });
+        if (falha) {
+          botao.disabled = false;
+          return erroNa(alvo, falha.message);
+        }
+        await devolucoesAdmin(alvo);
+      });
+    });
+  }
+
+  // ---------- Relatórios (administrador) ----------
+
+  async function relatoriosAdmin(alvo) {
+    const hoje = new Date();
+    const dataCampo = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const inicioPadrao = new Date(hoje.getTime() - 29 * 86400000);
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <h1>Relatórios da loja</h1>
+      <form id="form-periodo" class="formulario cartao">
+        <div class="linha-campos">
+          <label>De <input type="date" name="inicio" value="${dataCampo(inicioPadrao)}" required /></label>
+          <label>Até <input type="date" name="fim" value="${dataCampo(hoje)}" required /></label>
+        </div>
+        <button type="submit" class="btn-primario">Ver relatório</button>
+      </form>
+      ${ERRO_GERAL}
+      <div id="resultado-relatorio"></div>`;
+
+    const desenhar = async (ev) => {
+      ev?.preventDefault();
+      const f = new FormData(alvo.querySelector("#form-periodo"));
+      const inicio = new Date(`${f.get("inicio")}T00:00:00`);
+      const fim = new Date(`${f.get("fim")}T00:00:00`);
+      fim.setDate(fim.getDate() + 1);
+      if (!(inicio < fim)) return erroNa(alvo, "A data inicial precisa ser antes da final.");
+
+      const area = alvo.querySelector("#resultado-relatorio");
+      area.innerHTML = '<p class="ajuda">Calculando...</p>';
+      const { data: r, error } = await sb().rpc("relatorio_loja", { p_inicio: inicio.toISOString(), p_fim: fim.toISOString() });
+      if (error) {
+        area.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+        return;
+      }
+      if (!r) {
+        area.innerHTML = '<p class="ajuda">Sem dados para este período.</p>';
+        return;
+      }
+
+      const nomeEntrega = { retirada: "Retirada", entrega_local: "Entrega local", transportadora: "Transportadora" };
+      const porEntrega = Object.entries(r.por_entrega || {});
+      area.innerHTML = `
+        <section class="cartao">
+          <h2>Vendas</h2>
+          <p>Pedidos pagos: <strong>${Number(r.pedidos)}</strong></p>
+          <p>Faturamento: <strong>${reais(r.faturamento_centavos)}</strong></p>
+          <p class="ajuda">Produtos ${reais(r.produtos_centavos)} · Frete ${reais(r.frete_centavos)} · Descontos ${reais(r.descontos_centavos)}</p>
+          <p>Ticket médio: ${reais(r.ticket_medio_centavos)}</p>
+        </section>
+        <section class="cartao">
+          <h2>Entrega</h2>
+          ${porEntrega.length
+            ? `<ul>${porEntrega.map(([k, v]) => `<li>${esc(nomeEntrega[k] || k)}: ${Number(v)}</li>`).join("")}</ul>`
+            : '<p class="ajuda">Sem pedidos no período.</p>'}
+        </section>
+        <section class="cartao">
+          <h2>Devoluções</h2>
+          <p>Reembolsadas: <strong>${Number(r.devolucoes)}</strong> · Total devolvido: <strong>${reais(r.reembolsado_centavos)}</strong></p>
+        </section>
+        <section class="cartao">
+          <h2>Mais vendidos</h2>
+          ${(r.mais_vendidos || []).length
+            ? `<div class="lista">${r.mais_vendidos.map((x, n) => `
+                 <article class="item">
+                   <strong>${n + 1}. ${esc(x.nome || "Produto removido")}</strong>
+                   <span class="ajuda">${Number(x.quantidade)} un. · ${reais(x.valor_centavos)}</span>
+                 </article>`).join("")}</div>`
+            : '<p class="ajuda">Sem vendas no período.</p>'}
+        </section>`;
+    };
+
+    alvo.querySelector("#form-periodo").addEventListener("submit", desenhar);
+    desenhar();
+  }
+
   // caminho: partes do endereço após "loja". Ex.: ["loja", "produto", "<id>"].
   function tela(alvo, perfil, caminho) {
     const [, primeiro, segundo] = caminho;
@@ -1765,6 +1985,8 @@ window.Loja = (() => {
       if (segundo === "pedidos") return gerenciarPedidos(alvo);
       if (segundo === "pagamento") return configuracoesPagamento(alvo);
       if (segundo === "cupons") return cuponsAdmin(alvo);
+      if (segundo === "devolucoes") return devolucoesAdmin(alvo);
+      if (segundo === "relatorios") return relatoriosAdmin(alvo);
       if (segundo === "novo") return formularioProduto(alvo, perfil, null);
       if (segundo) return formularioProduto(alvo, perfil, segundo);
       return gerenciar(alvo);
