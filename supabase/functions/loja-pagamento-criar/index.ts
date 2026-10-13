@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
   if (!UUID.test(pedidoId)) return json(400, { erro: "Pedido inválido." });
 
   const { data: pedido } = await cooperado.from("pedidos")
-    .select("id, status, total_centavos, expira_em")
+    .select("id, status, total_centavos, frete_centavos, desconto_centavos, expira_em")
     .eq("id", pedidoId).maybeSingle();
   if (!pedido) return json(404, { erro: "Pedido não encontrado." });
   if (pedido.status !== "aguardando_pagamento") {
@@ -67,14 +67,39 @@ Deno.serve(async (req) => {
     return json(503, { erro: "A loja ainda não tem o endereço do aplicativo configurado." });
   }
 
+  // Itens do Mercado Pago: o desconto do cupom é repartido entre os produtos (o Mercado Pago
+  // não aceita valor negativo) e o frete entra como item próprio. A soma tem que bater com o total do pedido.
+  const subtotal = itens.reduce((soma, i) => soma + i.preco_unitario_centavos * i.quantidade, 0);
+  const desconto = Number(pedido.desconto_centavos ?? 0);
+  const linhas = itens.map((i) => {
+    const total = i.preco_unitario_centavos * i.quantidade;
+    return { i, total, desc: subtotal > 0 ? Math.floor((desconto * total) / subtotal) : 0 };
+  });
+  let falta = desconto - linhas.reduce((soma, l) => soma + l.desc, 0);
+  for (const l of linhas) {
+    const extra = Math.min(falta, l.total - l.desc);
+    l.desc += extra;
+    falta -= extra;
+  }
+
+  const itensPagamento = linhas.map(({ i, total, desc }) => ({
+    id: i.produto_id ?? "item",
+    title: (i.quantidade > 1 ? `${i.nome_snapshot} (${i.quantidade} un.)` : String(i.nome_snapshot)).slice(0, 250),
+    quantity: 1,
+    unit_price: (total - desc) / 100,
+    currency_id: "BRL",
+  }));
+  if (Number(pedido.frete_centavos) > 0) {
+    itensPagamento.push({ id: "frete", title: "Frete", quantity: 1, unit_price: Number(pedido.frete_centavos) / 100, currency_id: "BRL" });
+  }
+  const somaPagamento = itensPagamento.reduce((soma, i) => soma + Math.round(i.unit_price * 100), 0);
+  if (somaPagamento !== pedido.total_centavos) {
+    console.error("Itens do pagamento não batem com o total", somaPagamento, pedido.total_centavos);
+    return json(500, { erro: "Não foi possível montar o pagamento deste pedido. Monte o pedido de novo." });
+  }
+
   const preferencia = {
-    items: itens.map((i) => ({
-      id: i.produto_id ?? "item",
-      title: String(i.nome_snapshot).slice(0, 250),
-      quantity: i.quantidade,
-      unit_price: i.preco_unitario_centavos / 100,
-      currency_id: "BRL",
-    })),
+    items: itensPagamento,
     external_reference: pedido.id,
     notification_url: `${SUPABASE_URL}/functions/v1/loja-pagamento-webhook`,
     // O retorno fica na parte de consulta (antes do #), para o Mercado Pago poder acrescentar os dados dele.

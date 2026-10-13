@@ -273,6 +273,7 @@ window.Loja = (() => {
               ${favorito ? "Remover dos favoritos" : "Favoritar"}
             </button>
             <button type="button" class="btn-ghost" id="compartilhar">Compartilhar</button>
+            <button type="button" class="btn-ghost" id="indicar">Indicar a um amigo</button>
           </div>
 
           ${(listas || []).length
@@ -329,6 +330,15 @@ window.Loja = (() => {
 
     alvo.querySelector("#compartilhar").addEventListener("click", async () => {
       avisoNa(alvo, await compartilhar(p.nome, urlApp(`loja/produto/${p.id}`)));
+    });
+
+    alvo.querySelector("#indicar").addEventListener("click", async (ev) => {
+      const botao = ev.currentTarget;
+      botao.disabled = true;
+      const { data: token, error } = await sb().rpc("criar_indicacao_loja", { p_produto: p.id });
+      botao.disabled = false;
+      if (error) return erroNa(alvo, error.message);
+      avisoNa(alvo, await compartilhar(`Indicação: ${p.nome}`, urlApp(`loja/indicacao/${token}`)));
     });
 
     alvo.querySelector("#form-lista")?.addEventListener("submit", async (ev) => {
@@ -532,6 +542,7 @@ window.Loja = (() => {
       <p class="rodape-form"><a href="#loja">← Voltar para a loja</a></p>
       <h1>Listas de presentes</h1>
       <p class="ajuda">Monte uma lista e envie o link para quem quiser presentear você. A pessoa escolhe o item e não precisa de conta extra, mas precisa estar logada no app.</p>
+      <p class="rodape-form"><a href="#loja/indicacoes">Minhas indicações</a></p>
       ${ERRO_GERAL}
       ${(data || []).length
         ? `<div class="lista">
@@ -598,6 +609,7 @@ window.Loja = (() => {
         <h1>${esc(l.titulo)}</h1>
         <div class="acoes-evento">
           <button type="button" class="btn-primario" id="compartilhar-lista">Compartilhar lista</button>
+          <button type="button" class="btn-ghost" id="indicar-lista">Indicar a um amigo</button>
           <button type="button" class="btn-perigo" id="excluir-lista">Excluir lista</button>
         </div>
       </div>
@@ -628,6 +640,15 @@ window.Loja = (() => {
 
     alvo.querySelector("#compartilhar-lista").addEventListener("click", async () => {
       avisoNa(alvo, await compartilhar(l.titulo, link));
+    });
+
+    alvo.querySelector("#indicar-lista").addEventListener("click", async (ev) => {
+      const botao = ev.currentTarget;
+      botao.disabled = true;
+      const { data: token, error: falha } = await sb().rpc("criar_indicacao_loja", { p_lista: l.id });
+      botao.disabled = false;
+      if (falha) return erroNa(alvo, falha.message);
+      avisoNa(alvo, await compartilhar(`Lista: ${l.titulo}`, urlApp(`loja/indicacao/${token}`)));
     });
 
     alvo.querySelector("#excluir-lista").addEventListener("click", async () => {
@@ -708,6 +729,7 @@ window.Loja = (() => {
         <h1>Gerenciar loja</h1>
         <div class="acoes-evento">
           <a class="btn-ghost" href="#loja/gerenciar/pedidos">Pedidos</a>
+          <a class="btn-ghost" href="#loja/gerenciar/cupons">Cupons</a>
           <a class="btn-ghost" href="#loja/gerenciar/pagamento">Pagamento e configurações</a>
           <a class="btn-primario" href="#loja/gerenciar/novo">Novo produto</a>
         </div>
@@ -952,7 +974,7 @@ window.Loja = (() => {
     carregando(alvo);
     const [{ data: p, error }, { data: config }] = await Promise.all([
       sb().from("pedidos")
-        .select("id, codigo, status, metodo_entrega, subtotal_centavos, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
+        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
         .eq("id", id).maybeSingle(),
       sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
     ]);
@@ -1008,7 +1030,7 @@ window.Loja = (() => {
               <span class="ajuda">${Number(i.quantidade)} × ${reais(i.preco_unitario_centavos)}</span>
             </article>`).join("")}
         </div>
-        <p>Subtotal: ${reais(p.subtotal_centavos)}${p.frete_centavos ? ` · Frete: ${reais(p.frete_centavos)}` : " · Frete: sem custo"}</p>
+        <p>Subtotal: ${reais(p.subtotal_centavos)}${p.desconto_centavos ? ` · Desconto${p.cupom_codigo ? ` (${esc(p.cupom_codigo)})` : ""}: -${reais(p.desconto_centavos)}` : ""}${p.frete_centavos ? ` · Frete: ${reais(p.frete_centavos)}` : " · Frete: sem custo"}</p>
         <p><strong>Total: ${reais(p.total_centavos)}</strong></p>
       </section>
       ${blocoEntrega}
@@ -1352,11 +1374,20 @@ window.Loja = (() => {
     const subtotal = linhas.reduce((soma, i) => soma + i.quantidade * (i.produto.preco_promo_centavos ?? i.produto.preco_centavos), 0);
     let cotacao = null;
     let frete = null;
+    // Cupom aplicado: o servidor confere de novo na hora de criar o pedido.
+    let cupom = null;
 
     alvo.innerHTML = `
       <p class="rodape-form"><a href="#loja/carrinho">← Voltar ao carrinho</a></p>
       <h1>Entrega e pagamento</h1>
       <section class="cartao"><p>Subtotal dos produtos: <strong>${reais(subtotal)}</strong></p></section>
+      <section class="cartao">
+        <label>Cupom de desconto <small>(opcional)</small>
+          <input type="text" name="cupom" maxlength="20" autocomplete="off" placeholder="Ex.: BEMVINDO10" />
+        </label>
+        <button type="button" class="btn-ghost" id="aplicar-cupom">Aplicar cupom</button>
+        <p class="ajuda" id="cupom-msg" role="status"></p>
+      </section>
       ${ERRO_GERAL}
       ${AVISO_GERAL}
       <form id="form-entrega" class="formulario" novalidate>
@@ -1393,9 +1424,41 @@ window.Loja = (() => {
         botaoContinuar.disabled = true;
         return;
       }
-      alvo.querySelector("#total").textContent = `Total: ${reais(subtotal + frete.preco_centavos)} (produtos ${reais(subtotal)} + entrega ${reais(frete.preco_centavos)})`;
+      const desconto = cupom?.desconto_centavos || 0;
+      const total = subtotal - desconto + frete.preco_centavos;
+      alvo.querySelector("#total").textContent = `Total: ${reais(total)} (produtos ${reais(subtotal)}${desconto ? ` − desconto ${reais(desconto)}` : ""} + entrega ${reais(frete.preco_centavos)})`;
       botaoContinuar.disabled = false;
     };
+
+    const campoCupom = alvo.querySelector("[name=cupom]");
+    const msgCupom = alvo.querySelector("#cupom-msg");
+    const mostrarCupom = (texto, erro) => {
+      msgCupom.textContent = texto;
+      msgCupom.className = erro ? "erro" : "ajuda";
+    };
+
+    alvo.querySelector("#aplicar-cupom").addEventListener("click", async (ev) => {
+      const codigo = campoCupom.value.trim();
+      if (!codigo) {
+        cupom = null;
+        mostrarCupom("", false);
+        atualizarTotal();
+        return;
+      }
+      const botao = ev.currentTarget;
+      botao.disabled = true;
+      const { data, error: falha } = await sb().rpc("validar_cupom_loja", { p_codigo: codigo });
+      botao.disabled = false;
+      if (falha) {
+        cupom = null;
+        mostrarCupom(falha.message, true);
+        atualizarTotal();
+        return;
+      }
+      cupom = { codigo: data.codigo, desconto_centavos: data.desconto_centavos };
+      mostrarCupom(`Cupom ${data.codigo} aplicado: ${reais(data.desconto_centavos)} de desconto.`, false);
+      atualizarTotal();
+    });
 
     campoCep.addEventListener("input", () => { campoCep.value = formatarCep(campoCep.value); });
 
@@ -1473,6 +1536,7 @@ window.Loja = (() => {
         p_cotacao: cotacao.cotacao_id,
         p_opcao: frete.id,
         p_endereco: endereco,
+        ...(cupom ? { p_cupom: cupom.codigo } : {}),
       });
       if (falha) {
         botao.disabled = false;
@@ -1489,6 +1553,199 @@ window.Loja = (() => {
     });
   }
 
+  // ---------- Indicações ----------
+
+  async function indicacoes(alvo) {
+    carregando(alvo);
+    const { data, error } = await sb().rpc("minhas_indicacoes_loja");
+    if (error) {
+      alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+
+    const lista = data || [];
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/listas">← Voltar para as listas</a></p>
+      <h1>Minhas indicações</h1>
+      <p class="ajuda">Envie o link para um amigo. Quando ele abrir o link logado no aplicativo, a indicação conta aqui. O aplicativo não guarda o contato de quem você indicou.</p>
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      ${lista.length
+        ? `<div class="lista">
+             ${lista.map((i) => `
+               <article class="item">
+                 <strong>${esc(i.nome || "Item indisponível")}</strong>
+                 <span class="ajuda">${i.tipo === "lista" ? "Lista" : "Produto"} · ${Number(i.aceites) === 1 ? "1 amigo aceitou" : `${Number(i.aceites)} amigos aceitaram`}</span>
+                 <div class="acoes-evento">
+                   <button type="button" class="btn-ghost" data-enviar="${esc(i.token)}" data-titulo="${esc(i.nome || "Loja")}">Enviar de novo</button>
+                 </div>
+               </article>`).join("")}
+           </div>`
+        : '<p class="ajuda">Você ainda não indicou nada. Abra um produto ou uma lista e toque em “Indicar a um amigo”. <a href="#loja">Ver produtos</a></p>'}`;
+
+    alvo.querySelectorAll("[data-enviar]").forEach((botao) => {
+      botao.addEventListener("click", async () => {
+        avisoNa(alvo, await compartilhar(botao.dataset.titulo, urlApp(`loja/indicacao/${botao.dataset.enviar}`)));
+      });
+    });
+  }
+
+  // Quem abre o link de indicação aceita e segue para o produto ou a lista.
+  async function aceitarIndicacao(alvo, perfil, token) {
+    carregando(alvo);
+    const { data, error } = await sb().rpc("aceitar_indicacao_loja", { p_token: token });
+    if (error || !data) {
+      alvo.innerHTML = `<p class="rodape-form"><a href="#loja">← Voltar para a loja</a></p><p class="erro" role="alert">${esc(error?.message || "Indicação indisponível.")}</p>`;
+      return;
+    }
+    location.hash = data.tipo === "produto" ? `#loja/produto/${data.id}` : `#loja/compartilhada/${data.token}`;
+  }
+
+  // ---------- Cupons (administrador) ----------
+
+  async function cuponsAdmin(alvo) {
+    carregando(alvo);
+    const { data: cupons, error } = await sb().from("cupons_loja")
+      .select("id, codigo, tipo, valor, minimo_centavos, limite_usos, limite_por_usuario, validade_ate, ativo")
+      .order("criado_em", { ascending: false });
+    if (error) {
+      alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+
+    const lista = cupons || [];
+    const campoReais = (centavos) => (Number(centavos) / 100).toFixed(2).replace(".", ",");
+    const dataCampo = (valor) => {
+      const d = new Date(valor);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    const descreve = (c) => (c.tipo === "percentual" ? `${Number(c.valor)}%` : reais(c.valor));
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <h1>Cupons de desconto</h1>
+      <p class="ajuda">O desconto é calculado pelo servidor no fechamento do pedido. Pedidos cancelados ou expirados liberam o uso do cupom.</p>
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      <section class="cartao">
+        <h2>Cupons cadastrados</h2>
+        ${lista.length
+          ? `<div class="lista">
+               ${lista.map((c) => `
+                 <article class="item">
+                   <strong>${esc(c.codigo)}</strong>
+                   <span class="ajuda">${esc(descreve(c))} de desconto${c.minimo_centavos ? ` · a partir de ${reais(c.minimo_centavos)}` : ""}${c.validade_ate ? ` · até ${dataHora(c.validade_ate)}` : ""}${c.limite_usos ? ` · limite de ${Number(c.limite_usos)} uso(s)` : ""} · ${Number(c.limite_por_usuario)} por pessoa</span>
+                   <span class="marcas"><span class="marca">${c.ativo ? "Ativo" : "Desativado"}</span></span>
+                   <div class="acoes-evento"><button type="button" class="btn-ghost" data-editar="${esc(c.id)}">Editar</button></div>
+                 </article>`).join("")}
+             </div>`
+          : '<p class="ajuda">Nenhum cupom cadastrado ainda.</p>'}
+      </section>
+      <form id="form-cupom" class="formulario cartao" novalidate>
+        <h2 id="titulo-cupom">Novo cupom</h2>
+        <input type="hidden" name="id" />
+        <label>Código <small>(letras, números, - ou _; de 3 a 20)</small>
+          <input type="text" name="codigo" maxlength="20" autocomplete="off" />
+        </label>
+        <div class="linha-campos">
+          <label>Tipo
+            <select name="tipo">
+              <option value="percentual">Percentual (%)</option>
+              <option value="valor">Valor fixo (R$)</option>
+            </select>
+          </label>
+          <label>Valor do desconto <input type="text" name="valor" inputmode="decimal" placeholder="10 ou 15,90" /></label>
+        </div>
+        <div class="linha-campos">
+          <label>Compra mínima (R$) <small>(opcional)</small> <input type="text" name="minimo" inputmode="decimal" /></label>
+          <label>Limite de usos no total <small>(opcional)</small> <input type="number" name="limite_usos" min="1" step="1" /></label>
+        </div>
+        <div class="linha-campos">
+          <label>Usos por pessoa <input type="number" name="limite_por_usuario" min="1" max="20" step="1" value="1" /></label>
+          <label>Válido até <small>(opcional)</small> <input type="date" name="validade" /></label>
+        </div>
+        <label><input type="checkbox" name="ativo" checked /> Cupom ativo</label>
+        <div class="acoes-evento">
+          <button type="submit" class="btn-primario" id="salvar-cupom">Salvar cupom</button>
+          <button type="button" class="btn-ghost" id="limpar-cupom">Limpar formulário</button>
+        </div>
+      </form>`;
+
+    const form = alvo.querySelector("#form-cupom");
+    const limpar = () => {
+      form.reset();
+      form.elements.id.value = "";
+      alvo.querySelector("#titulo-cupom").textContent = "Novo cupom";
+    };
+
+    alvo.querySelector("#limpar-cupom").addEventListener("click", limpar);
+
+    alvo.querySelectorAll("[data-editar]").forEach((botao) => {
+      botao.addEventListener("click", () => {
+        const c = lista.find((x) => x.id === botao.dataset.editar);
+        if (!c) return;
+        form.elements.id.value = c.id;
+        form.codigo.value = c.codigo;
+        form.tipo.value = c.tipo;
+        form.valor.value = c.tipo === "percentual" ? String(c.valor) : campoReais(c.valor);
+        form.minimo.value = c.minimo_centavos ? campoReais(c.minimo_centavos) : "";
+        form.limite_usos.value = c.limite_usos ?? "";
+        form.limite_por_usuario.value = c.limite_por_usuario;
+        form.validade.value = c.validade_ate ? dataCampo(c.validade_ate) : "";
+        form.ativo.checked = c.ativo;
+        alvo.querySelector("#titulo-cupom").textContent = "Editar cupom";
+        form.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const tipo = String(f.get("tipo"));
+
+      let valor;
+      if (tipo === "percentual") {
+        valor = Number(String(f.get("valor")).trim());
+        if (!Number.isInteger(valor) || valor < 1 || valor > 100) return erroNa(alvo, "Percentual: informe um número inteiro de 1 a 100.");
+      } else {
+        valor = parseReais(f.get("valor"));
+        if (!(valor > 0)) return erroNa(alvo, "Informe o valor do desconto em reais.");
+      }
+
+      const minimoTexto = String(f.get("minimo") || "").trim();
+      const minimo = minimoTexto ? parseReais(minimoTexto) : 0;
+      if (Number.isNaN(minimo)) return erroNa(alvo, "Compra mínima: informe um valor em reais.");
+
+      const usosTexto = String(f.get("limite_usos") || "").trim();
+      const limiteUsos = usosTexto ? Number(usosTexto) : null;
+      if (usosTexto && !(Number.isInteger(limiteUsos) && limiteUsos > 0)) return erroNa(alvo, "Limite de usos: informe um número inteiro maior que zero.");
+
+      const porPessoa = Number(f.get("limite_por_usuario"));
+      if (!Number.isInteger(porPessoa) || porPessoa < 1 || porPessoa > 20) return erroNa(alvo, "Usos por pessoa: de 1 a 20.");
+
+      const validade = f.get("validade") ? new Date(`${f.get("validade")}T23:59:59`).toISOString() : null;
+
+      const botao = alvo.querySelector("#salvar-cupom");
+      botao.disabled = true;
+      const { error: falha } = await sb().rpc("salvar_cupom_loja", {
+        p_id: f.get("id") || null,
+        p_codigo: String(f.get("codigo") || "").trim(),
+        p_tipo: tipo,
+        p_valor: valor,
+        p_minimo_centavos: minimo,
+        p_limite_usos: limiteUsos,
+        p_limite_por_usuario: porPessoa,
+        p_validade: validade,
+        p_ativo: form.ativo.checked,
+      });
+      botao.disabled = false;
+      if (falha) return erroNa(alvo, falha.message);
+
+      await cuponsAdmin(alvo);
+      avisoNa(alvo, "Cupom salvo.");
+    });
+  }
+
   // caminho: partes do endereço após "loja". Ex.: ["loja", "produto", "<id>"].
   function tela(alvo, perfil, caminho) {
     const [, primeiro, segundo] = caminho;
@@ -1498,6 +1755,8 @@ window.Loja = (() => {
     if (primeiro === "listas") return listas(alvo, perfil);
     if (primeiro === "lista" && segundo) return lista(alvo, perfil, segundo);
     if (primeiro === "compartilhada" && segundo) return compartilhada(alvo, perfil, segundo);
+    if (primeiro === "indicacoes") return indicacoes(alvo);
+    if (primeiro === "indicacao" && segundo) return aceitarIndicacao(alvo, perfil, segundo);
     if (primeiro === "finalizar") return finalizar(alvo, perfil);
     if (primeiro === "pedidos") return pedidos(alvo);
     if (primeiro === "pedido" && segundo) return pedido(alvo, perfil, segundo, location.search.includes("retorno="));
@@ -1505,6 +1764,7 @@ window.Loja = (() => {
       if (!ehAdmin(perfil)) return vitrine(alvo, perfil);
       if (segundo === "pedidos") return gerenciarPedidos(alvo);
       if (segundo === "pagamento") return configuracoesPagamento(alvo);
+      if (segundo === "cupons") return cuponsAdmin(alvo);
       if (segundo === "novo") return formularioProduto(alvo, perfil, null);
       if (segundo) return formularioProduto(alvo, perfil, segundo);
       return gerenciar(alvo);
