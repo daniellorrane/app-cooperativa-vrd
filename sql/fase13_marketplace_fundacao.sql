@@ -120,7 +120,20 @@ alter table public.pedidos add column if not exists compra_id uuid;
 create index if not exists pedidos_vendedor_idx on public.pedidos (vendedor_id);
 create index if not exists pedidos_compra_idx on public.pedidos (compra_id);
 
--- 4. Comissão padrão da loja (0 até o administrador definir outro valor na tela de configurações)
+-- 4. Comissão padrão da loja (0 até o administrador definir outro valor na tela de configurações).
+-- A tabela aceita só chaves conhecidas, então a lista de chaves é ampliada antes do insert.
+alter table public.loja_configuracoes drop constraint if exists loja_configuracoes_chave_check;
+alter table public.loja_configuracoes add constraint loja_configuracoes_chave_check check (chave = any (array[
+  'nome_loja', 'endereco_retirada', 'horario_retirada', 'minutos_expiracao_pedido', 'url_publica_app',
+  'mp_public_key', 'cep_origem', 'entrega_local_ativa', 'entrega_local_ceps', 'taxa_entrega_local_centavos',
+  'melhor_envio_sandbox',
+  'fiscal_ativo', 'fiscal_ambiente', 'fiscal_cnpj', 'fiscal_razao_social', 'fiscal_ie', 'fiscal_regime',
+  'fiscal_logradouro', 'fiscal_numero', 'fiscal_bairro', 'fiscal_municipio', 'fiscal_uf', 'fiscal_cep',
+  'fiscal_natureza_operacao', 'fiscal_cfop', 'fiscal_csosn', 'fiscal_cst_icms', 'fiscal_icms_aliquota',
+  'fiscal_origem', 'fiscal_cst_pis', 'fiscal_cst_cofins',
+  'comissao_padrao_percentual'
+]::text[]));
+
 insert into public.loja_configuracoes (chave, valor, atualizado_em)
 values ('comissao_padrao_percentual', '0', now())
 on conflict (chave) do nothing;
