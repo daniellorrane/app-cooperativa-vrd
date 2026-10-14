@@ -1180,8 +1180,8 @@ window.Loja = (() => {
            ${p.nf_erro ? `<p class="erro">${esc(p.nf_erro)}</p>` : ""}
            ${danfe ? `<p><a class="btn-ghost" href="${esc(danfe)}" target="_blank" rel="noopener">Ver DANFE (PDF)</a></p>` : ""}
            <div class="acoes-evento">
-             ${p.nf_status !== "autorizada" && p.nf_status !== "processando"
-               ? '<button type="button" class="btn-primario" data-nota="emitir">Emitir nota</button>' : ""}
+             ${p.nf_status !== "autorizada"
+               ? `<button type="button" class="btn-primario" data-nota="emitir">${p.nf_status === "processando" ? "Emitir de novo" : "Emitir nota"}</button>` : ""}
              ${p.nf_status === "processando" || p.nf_status === "erro"
                ? '<button type="button" class="btn-ghost" data-nota="consultar">Consultar situação</button>' : ""}
              ${p.nf_status === "autorizada"
@@ -1282,6 +1282,10 @@ window.Loja = (() => {
       botao.addEventListener("click", async () => {
         const acao = botao.dataset.nota;
         let justificativa;
+        if (acao === "emitir" && p.nf_status === "processando"
+          && !confirm("Esta nota ainda está em processamento. Consulte a situação antes. Emitir de novo só se a consulta mostrar que ela não foi criada. Emitir mesmo assim?")) {
+          return;
+        }
         if (acao === "cancelar") {
           justificativa = (prompt("Motivo do cancelamento da nota (mínimo de 15 letras):") || "").trim();
           if (justificativa.length < 15) return erroNa(alvo, "A justificativa do cancelamento precisa ter pelo menos 15 letras.");

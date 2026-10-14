@@ -245,8 +245,9 @@ Deno.serve(async (req) => {
     return json(202, { situacao: "processando", mensagem: "Cancelamento enviado. Atualize a situação em alguns minutos." });
   } catch (erro) {
     console.error("Falha de rede com o Focus NFe", String(erro));
+    // Em falha de rede a nota pode ter chegado ao Focus NFe. Fica "processando" para o admin consultar antes de reemitir.
     if (acao === "emitir" || acao === "consultar") {
-      await registrar({ status: acao === "emitir" ? "erro" : "processando", erro: "Não foi possível falar com o Focus NFe agora. Tente de novo em instantes." });
+      await registrar({ status: "processando", erro: "Não foi possível falar com o Focus NFe agora. Consulte a situação antes de emitir de novo." });
     }
     return json(502, { erro: "Não foi possível falar com o Focus NFe agora. Tente de novo em instantes." });
   }
