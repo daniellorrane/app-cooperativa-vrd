@@ -762,6 +762,7 @@ window.Loja = (() => {
           <a class="btn-ghost" href="#loja/gerenciar/pedidos">Pedidos</a>
           <a class="btn-ghost" href="#loja/gerenciar/cupons">Cupons</a>
           <a class="btn-ghost" href="#loja/gerenciar/vendedores">Vendedores</a>
+          <a class="btn-ghost" href="#loja/gerenciar/repasses">Repasses</a>
           <a class="btn-ghost" href="#loja/gerenciar/devolucoes">Devoluções</a>
           <a class="btn-ghost" href="#loja/gerenciar/relatorios">Relatórios</a>
           <a class="btn-ghost" href="#loja/gerenciar/pagamento">Pagamento e configurações</a>
@@ -1985,6 +1986,50 @@ window.Loja = (() => {
 
   const SITUACAO_VENDEDOR = { pendente: "Aguardando aprovação", aprovado: "Ativo", suspenso: "Suspenso", recusado: "Recusado" };
 
+  // ---------- Repasses (administrador) ----------
+  async function repassesAdmin(alvo) {
+    carregando(alvo);
+    const { data, error } = await sb().rpc("repasses_resumo_loja");
+    if (error) {
+      alvo.innerHTML = `<p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p><p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+    const lista = data || [];
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <h1>Repasses aos vendedores</h1>
+      <p class="ajuda">Transfira o valor a cada vendedor por Pix ou outro meio, e depois marque como pago. Saldo negativo significa que o vendedor deve à cooperativa, por causa de devolução.</p>
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      <div class="lista">
+        ${lista.length
+          ? lista.map((v) => `
+              <article class="item">
+                <strong>${esc(v.nome_loja)}</strong>
+                <span class="ajuda">${esc(SITUACAO_VENDEDOR[v.situacao] || v.situacao)} · a pagar ${reais(v.saldo_pendente_centavos)} · já repassado ${reais(v.saldo_pago_centavos)}</span>
+                ${v.saldo_pendente_centavos > 0
+                  ? `<button type="button" class="btn-primario" data-pagar="${esc(v.vendedor_id)}">Marcar ${reais(v.saldo_pendente_centavos)} como pago</button>`
+                  : ""}
+              </article>`).join("")
+          : '<p class="ajuda">Nenhum vendedor cadastrado ainda.</p>'}
+      </div>`;
+
+    alvo.querySelectorAll("[data-pagar]").forEach((botao) => {
+      botao.addEventListener("click", async () => {
+        if (!confirm("Confirma que o valor já foi transferido para o vendedor?")) return;
+        botao.disabled = true;
+        const { data: pago, error: falha } = await sb().rpc("pagar_repasses_loja", { p_vendedor: botao.dataset.pagar });
+        if (falha) {
+          botao.disabled = false;
+          return erroNa(alvo, falha.message);
+        }
+        await repassesAdmin(alvo);
+        avisoNa(alvo, `Repasse registrado: ${reais(pago)}.`);
+      });
+    });
+  }
+
   async function vendedoresAdmin(alvo) {
     carregando(alvo);
     const [{ data: vendedores, error }, { data: config }] = await Promise.all([
@@ -2078,6 +2123,30 @@ window.Loja = (() => {
   }
 
   // Área do cooperado que quer vender. A RLS devolve só o próprio cadastro.
+  // Extrato do vendedor: saldo a receber e lançamentos da própria loja.
+  async function blocoExtratoVendedor() {
+    const { data, error } = await sb().rpc("meu_extrato_loja");
+    if (error) return `<p class="erro" role="alert">${esc(error.message)}</p>`;
+    const linhas = data || [];
+    const rotulos = { venda: "Venda", estorno: "Devolução", desconto: "Cupom" };
+    const aReceber = linhas.filter((l) => l.status === "pendente").reduce((soma, l) => soma + l.valor_centavos, 0);
+    const jaRepassado = linhas.filter((l) => l.status === "pago").reduce((soma, l) => soma + l.valor_centavos, 0);
+
+    return `
+      <section class="cartao">
+        <h2>Extrato</h2>
+        <p>${aReceber < 0 ? "Você deve à cooperativa" : "A receber"}: <strong>${reais(Math.abs(aReceber))}</strong> · já repassado: ${reais(jaRepassado)}</p>
+        <p class="ajuda">Cada venda aparece pelo valor líquido, já descontada a comissão da cooperativa. Devoluções aparecem como estorno.</p>
+        ${linhas.length
+          ? `<div class="lista">${linhas.map((l) => `
+              <article class="item">
+                <strong>${esc(rotulos[l.tipo] || l.tipo)} · pedido ${esc(l.codigo)}</strong>
+                <span class="ajuda">${dataHora(l.criado_em)} · ${reais(l.valor_centavos)} · ${l.status === "pago" ? "repassado" : "pendente"}</span>
+              </article>`).join("")}</div>`
+          : '<p class="ajuda">Nenhuma venda ainda.</p>'}
+      </section>`;
+  }
+
   // Lista os produtos do vendedor (RLS deixa ver só os dele) com atalho para cadastrar.
   async function blocoProdutosVendedor(vendedorId) {
     const { data: produtos, error } = await sb().from("loja_produtos")
@@ -2147,7 +2216,7 @@ window.Loja = (() => {
           <p class="texto-puro">${esc(mensagens[meu.status] || "")}</p>
           ${meu.descricao ? `<p class="texto-puro">${esc(meu.descricao)}</p>` : ""}
         </section>
-        ${meu.status === "aprovado" ? await blocoProdutosVendedor(meu.id) : ""}`;
+        ${meu.status === "aprovado" ? `${await blocoExtratoVendedor()}${await blocoProdutosVendedor(meu.id)}` : ""}`;
       return;
     }
 
@@ -2519,6 +2588,7 @@ window.Loja = (() => {
       if (segundo === "pagamento") return configuracoesPagamento(alvo);
       if (segundo === "cupons") return cuponsAdmin(alvo);
       if (segundo === "vendedores") return vendedoresAdmin(alvo);
+      if (segundo === "repasses") return repassesAdmin(alvo);
       if (segundo === "devolucoes") return devolucoesAdmin(alvo);
       if (segundo === "relatorios") return relatoriosAdmin(alvo);
       if (segundo === "novo") return formularioProduto(alvo, perfil, null);
