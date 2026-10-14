@@ -761,6 +761,7 @@ window.Loja = (() => {
         <div class="acoes-evento">
           <a class="btn-ghost" href="#loja/gerenciar/pedidos">Pedidos</a>
           <a class="btn-ghost" href="#loja/gerenciar/cupons">Cupons</a>
+          <a class="btn-ghost" href="#loja/gerenciar/vendedores">Vendedores</a>
           <a class="btn-ghost" href="#loja/gerenciar/devolucoes">Devoluções</a>
           <a class="btn-ghost" href="#loja/gerenciar/relatorios">Relatórios</a>
           <a class="btn-ghost" href="#loja/gerenciar/pagamento">Pagamento e configurações</a>
@@ -1451,9 +1452,10 @@ window.Loja = (() => {
 
   async function configuracoesPagamento(alvo) {
     carregando(alvo);
-    const [{ data: linhas }, { data: situacao }] = await Promise.all([
+    const [{ data: linhas }, { data: situacao }, { data: provedores }] = await Promise.all([
       sb().from("loja_configuracoes").select("chave, valor"),
       sb().rpc("status_loja_pagamento"),
+      sb().from("loja_provedores_entrega").select("codigo, nome, tipo, ativo, ambiente, configuracao").order("nome"),
     ]);
     const v = Object.fromEntries((linhas || []).map((l) => [l.chave, l.valor]));
     const situacaoTexto = (ok) => (ok ? "configurado" : "não configurado");
@@ -1527,6 +1529,11 @@ window.Loja = (() => {
           <input type="text" name="melhor_envio_token" autocomplete="off" spellcheck="false" maxlength="2000"
             placeholder="${situacao?.melhor_envio_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Melhor Envio"}" />
         </label>
+        <h2>Marketplace</h2>
+        <label>Comissão padrão da loja (%) <small>(vale para vendedores sem comissão própria)</small>
+          <input type="text" name="comissao_padrao_percentual" inputmode="decimal" maxlength="6" value="${esc(v.comissao_padrao_percentual || "0")}" />
+        </label>
+
         <h2>Nota fiscal (Focus NFe)</h2>
         <p class="ajuda">Preencha com os dados da cooperativa. Os campos tributários precisam ser confirmados pelo contador antes da primeira nota real. Comece sempre pelo ambiente de teste (homologação).</p>
         <label>Emissão de nota fiscal
@@ -1574,7 +1581,35 @@ window.Loja = (() => {
         <label>CST da COFINS <input type="text" name="fiscal_cst_cofins" maxlength="2" value="${esc(v.fiscal_cst_cofins || "07")}" /></label>
 
         <button type="submit" class="btn-primario">Salvar configurações</button>
-      </form>`;
+      </form>
+
+      <section class="cartao" id="secao-entrega">
+        <h2>Entrega por provedor</h2>
+        <p class="ajuda">Ative os provedores que a cooperativa usa. As chaves ficam guardadas de forma protegida. Deixe o campo de chave em branco para manter a chave atual.</p>
+        <form id="form-entrega" class="formulario" novalidate>
+          ${(provedores || []).map((p) => `
+            <fieldset class="provedor-entrega">
+              <legend>${esc(p.nome)}</legend>
+              <label><input type="checkbox" name="ativo__${esc(p.codigo)}" ${p.ativo ? "checked" : ""} /> Ativo</label>
+              <label>Ambiente
+                <select name="ambiente__${esc(p.codigo)}">
+                  <option value="homologacao" ${p.ambiente !== "producao" ? "selected" : ""}>Teste (homologação)</option>
+                  <option value="producao" ${p.ambiente === "producao" ? "selected" : ""}>Produção</option>
+                </select>
+              </label>
+              <label>Identificador da conta <small>(cliente ou ID da empresa, se o provedor pedir)</small>
+                <input type="text" name="cliente__${esc(p.codigo)}" maxlength="200" value="${esc(p.configuracao?.cliente_id || "")}" />
+              </label>
+              <label>Chave de acesso <small>(${p.ativo ? "ativo" : "inativo"})</small>
+                <input type="text" name="token__${esc(p.codigo)}" autocomplete="off" spellcheck="false" maxlength="500" />
+              </label>
+              <label>Chave secreta <small>(só se o provedor pedir)</small>
+                <input type="text" name="segredo__${esc(p.codigo)}" autocomplete="off" spellcheck="false" maxlength="500" />
+              </label>
+            </fieldset>`).join("")}
+          <button type="submit" class="btn-primario">Salvar entrega</button>
+        </form>
+      </section>`;
 
     alvo.querySelector("#form-config").addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -1602,6 +1637,11 @@ window.Loja = (() => {
       if (!Number.isFinite(taxaCentavos) || taxaCentavos < 0) {
         return erroNa(alvo, "Informe a taxa da entrega local no formato 10,00.");
       }
+      const comissaoTexto = String(f.get("comissao_padrao_percentual") || "0").trim().replace(",", ".");
+      const comissao = Number(comissaoTexto);
+      if (!(comissao >= 0 && comissao <= 100)) {
+        return erroNa(alvo, "A comissão padrão precisa estar entre 0 e 100.");
+      }
 
       const botao = form.querySelector("button[type=submit]");
       botao.disabled = true;
@@ -1615,6 +1655,7 @@ window.Loja = (() => {
       ];
       const linhasSalvar = campos.map((chave) => ({ chave, valor: String(f.get(chave) || "").trim(), atualizado_em: new Date().toISOString() }));
       linhasSalvar.push({ chave: "cep_origem", valor: cepOrigem, atualizado_em: new Date().toISOString() });
+      linhasSalvar.push({ chave: "comissao_padrao_percentual", valor: String(comissao), atualizado_em: new Date().toISOString() });
       linhasSalvar.push({ chave: "taxa_entrega_local_centavos", valor: String(taxaCentavos), atualizado_em: new Date().toISOString() });
 
       const { error: falha } = await sb().from("loja_configuracoes").upsert(linhasSalvar, { onConflict: "chave" });
@@ -1635,6 +1676,43 @@ window.Loja = (() => {
 
       configuracoesPagamento(alvo);
       avisoNa(alvo, "Configurações salvas.");
+    });
+
+    alvo.querySelector("#form-entrega")?.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const form = ev.currentTarget;
+      const f = new FormData(form);
+      const botao = form.querySelector("button[type=submit]");
+      botao.disabled = true;
+
+      for (const p of provedores || []) {
+        const codigo = p.codigo;
+        const cliente = String(f.get(`cliente__${codigo}`) || "").trim();
+        const { error: falha } = await sb().rpc("salvar_provedor_entrega_loja", {
+          p_codigo: codigo,
+          p_ativo: f.get(`ativo__${codigo}`) === "on",
+          p_ambiente: String(f.get(`ambiente__${codigo}`) || "homologacao"),
+          p_configuracao: cliente ? { cliente_id: cliente } : {},
+        });
+        if (falha) {
+          botao.disabled = false;
+          return erroNa(alvo, `${p.nome}: ${falha.message}`);
+        }
+        for (const campo of ["token", "segredo"]) {
+          const valor = String(f.get(`${campo}__${codigo}`) || "").trim();
+          if (!valor) continue;
+          const { error: falhaSegredo } = await sb().rpc("salvar_segredo_entrega_loja", {
+            p_codigo: codigo, p_campo: campo, p_valor: valor,
+          });
+          if (falhaSegredo) {
+            botao.disabled = false;
+            return erroNa(alvo, `${p.nome}: ${falhaSegredo.message}`);
+          }
+        }
+      }
+
+      configuracoesPagamento(alvo);
+      avisoNa(alvo, "Entrega salva.");
     });
   }
 
@@ -1895,6 +1973,174 @@ window.Loja = (() => {
       return;
     }
     location.hash = data.tipo === "produto" ? `#loja/produto/${data.id}` : `#loja/compartilhada/${data.token}`;
+  }
+
+  // ---------- Vendedores (marketplace) ----------
+
+  const SITUACAO_VENDEDOR = { pendente: "Aguardando aprovação", aprovado: "Ativo", suspenso: "Suspenso", recusado: "Recusado" };
+
+  async function vendedoresAdmin(alvo) {
+    carregando(alvo);
+    const [{ data: vendedores, error }, { data: config }] = await Promise.all([
+      sb().from("loja_vendedores")
+        .select("id, nome_loja, documento, descricao, cep_origem, status, comissao_percentual, criado_em")
+        .order("criado_em", { ascending: false }),
+      sb().from("loja_configuracoes").select("valor").eq("chave", "comissao_padrao_percentual").maybeSingle(),
+    ]);
+    if (error) {
+      alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+
+    const lista = vendedores || [];
+    const padrao = config?.valor ?? "0";
+    // Documento aparece parcialmente, só para identificar o cadastro.
+    const mascarado = (doc) => (doc.length === 11
+      ? `***.${doc.slice(3, 6)}.${doc.slice(6, 9)}-**`
+      : `**.${doc.slice(2, 5)}.${doc.slice(5, 8)}/****-**`);
+
+    const linhaVendedor = (v) => `
+      <article class="item" data-vendedor="${esc(v.id)}">
+        <strong>${esc(v.nome_loja)}</strong>
+        <span class="ajuda">${esc(mascarado(v.documento))} · cadastro em ${dataHora(v.criado_em)}${v.cep_origem ? ` · CEP de origem ${esc(v.cep_origem)}` : ""}</span>
+        ${v.descricao ? `<p class="texto-puro">${esc(v.descricao)}</p>` : ""}
+        <span class="marcas"><span class="marca">${esc(SITUACAO_VENDEDOR[v.status] || v.status)}</span></span>
+        <div class="acoes-evento">
+          ${v.status === "pendente" ? `
+            <button type="button" class="btn-primario" data-acao="aprovar">Aprovar</button>
+            <button type="button" class="btn-ghost" data-acao="recusar">Recusar</button>` : ""}
+          ${v.status === "aprovado" ? '<button type="button" class="btn-ghost" data-acao="suspender">Suspender</button>' : ""}
+          ${v.status === "suspenso" ? '<button type="button" class="btn-primario" data-acao="reativar">Reativar</button>' : ""}
+        </div>
+        ${v.status === "aprovado" || v.status === "suspenso" ? `
+          <div class="linha-comissao">
+            <label>Comissão própria (%) <small>(vazio = usa a padrão, ${esc(padrao)}%)</small>
+              <input type="text" inputmode="decimal" maxlength="6" data-comissao value="${v.comissao_percentual == null ? "" : esc(String(v.comissao_percentual))}" />
+            </label>
+            <button type="button" class="btn-ghost" data-salvar-comissao>Salvar comissão</button>
+          </div>` : ""}
+      </article>`;
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <h1>Vendedores</h1>
+      <p class="ajuda">Os produtos de um vendedor só aparecem na loja depois da sua aprovação. Suspender tira os produtos da loja, mas não cancela pedidos já feitos. A comissão padrão da loja é ${esc(padrao)}%.</p>
+      ${ERRO_GERAL}
+      ${AVISO_GERAL}
+      <section class="cartao">
+        <h2>Cadastros</h2>
+        ${lista.length
+          ? `<div class="lista">${lista.map(linhaVendedor).join("")}</div>`
+          : '<p class="ajuda">Nenhum vendedor cadastrado ainda.</p>'}
+      </section>`;
+
+    alvo.querySelectorAll("[data-vendedor]").forEach((linha) => {
+      const id = linha.dataset.vendedor;
+
+      linha.querySelectorAll("[data-acao]").forEach((botao) => {
+        botao.addEventListener("click", async () => {
+          const acao = botao.dataset.acao;
+          if (acao === "suspender" && !confirm("Suspender este vendedor? Os produtos dele saem da loja. Pedidos já feitos continuam.")) return;
+          botao.disabled = true;
+          const { error: falha } = await sb().rpc("decidir_vendedor_loja", { p_vendedor: id, p_acao: acao });
+          if (falha) {
+            botao.disabled = false;
+            return erroNa(alvo, falha.message);
+          }
+          await vendedoresAdmin(alvo);
+          avisoNa(alvo, "Situação do vendedor atualizada.");
+        });
+      });
+
+      linha.querySelector("[data-salvar-comissao]")?.addEventListener("click", async (ev) => {
+        const texto = String(linha.querySelector("[data-comissao]").value || "").trim().replace(",", ".");
+        let percentual = null;
+        if (texto !== "") {
+          percentual = Number(texto);
+          if (!(percentual >= 0 && percentual <= 100)) return erroNa(alvo, "A comissão precisa estar entre 0 e 100.");
+        }
+        ev.currentTarget.disabled = true;
+        const { error: falha } = await sb().rpc("definir_comissao_vendedor_loja", { p_vendedor: id, p_percentual: percentual });
+        if (falha) {
+          ev.currentTarget.disabled = false;
+          return erroNa(alvo, falha.message);
+        }
+        await vendedoresAdmin(alvo);
+        avisoNa(alvo, "Comissão salva.");
+      });
+    });
+  }
+
+  // Área do cooperado que quer vender. A RLS devolve só o próprio cadastro.
+  async function areaVendedor(alvo, perfil) {
+    carregando(alvo);
+    if (ehAdmin(perfil)) {
+      alvo.innerHTML = `
+        <p class="rodape-form"><a href="#loja">← Voltar para a loja</a></p>
+        <h1>Vendedores</h1>
+        <p class="ajuda">Administradores aprovam e acompanham os vendedores em Gerenciar loja &gt; Vendedores.</p>`;
+      return;
+    }
+
+    const { data: meu, error } = await sb().from("loja_vendedores")
+      .select("id, nome_loja, descricao, cep_origem, status")
+      .limit(1).maybeSingle();
+    if (error) {
+      alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
+      return;
+    }
+
+    if (meu) {
+      const mensagens = {
+        pendente: "Seu cadastro está em análise. Você será avisado quando a cooperativa aprovar.",
+        aprovado: "Sua loja está ativa. Os seus produtos aparecem para os cooperados.",
+        suspenso: "Sua loja está suspensa, e os seus produtos não aparecem na loja. Procure a cooperativa.",
+        recusado: "Seu cadastro não foi aprovado. Procure a cooperativa para saber o motivo.",
+      };
+      alvo.innerHTML = `
+        <p class="rodape-form"><a href="#loja">← Voltar para a loja</a></p>
+        <h1>Minha loja</h1>
+        <section class="cartao">
+          <h2>${esc(meu.nome_loja)}</h2>
+          <span class="marcas"><span class="marca">${esc(SITUACAO_VENDEDOR[meu.status] || meu.status)}</span></span>
+          <p class="texto-puro">${esc(mensagens[meu.status] || "")}</p>
+          ${meu.descricao ? `<p class="texto-puro">${esc(meu.descricao)}</p>` : ""}
+        </section>`;
+      return;
+    }
+
+    alvo.innerHTML = `
+      <p class="rodape-form"><a href="#loja">← Voltar para a loja</a></p>
+      <h1>Venda na loja</h1>
+      <p class="ajuda">Cadastre a sua loja para vender produtos aqui. A cooperativa aprova o cadastro antes de os seus produtos aparecerem.</p>
+      ${ERRO_GERAL}
+      <form id="form-vendedor" class="formulario cartao" novalidate>
+        <label>Nome da loja <input type="text" name="nome" maxlength="80" required /></label>
+        <label>CPF ou CNPJ <small>(só números)</small> <input type="text" name="documento" inputmode="numeric" maxlength="18" required /></label>
+        <label>Descrição da loja <small>(opcional)</small> <textarea name="descricao" rows="3" maxlength="500"></textarea></label>
+        <label>CEP de onde saem os produtos <small>(opcional, usado no frete)</small> <input type="text" name="cep" inputmode="numeric" maxlength="9" /></label>
+        <button type="submit" class="btn-primario">Enviar cadastro</button>
+      </form>`;
+
+    alvo.querySelector("#form-vendedor").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const form = ev.currentTarget;
+      const f = new FormData(form);
+      const botao = form.querySelector("button[type=submit]");
+      botao.disabled = true;
+      const { error: falha } = await sb().rpc("cadastrar_vendedor_loja", {
+        p_nome: String(f.get("nome") || "").trim(),
+        p_documento: String(f.get("documento") || ""),
+        p_descricao: String(f.get("descricao") || "").trim() || null,
+        p_cep: String(f.get("cep") || "") || null,
+      });
+      if (falha) {
+        botao.disabled = false;
+        return erroNa(alvo, falha.message);
+      }
+      await areaVendedor(alvo, perfil);
+      avisoNa(alvo, "Cadastro enviado. Aguarde a aprovação da cooperativa.");
+    });
   }
 
   // ---------- Cupons (administrador) ----------
@@ -2214,6 +2460,7 @@ window.Loja = (() => {
     const [, primeiro, segundo] = caminho;
     if (primeiro === "produto" && segundo) return produto(alvo, perfil, segundo);
     if (primeiro === "carrinho") return carrinho(alvo, perfil);
+    if (primeiro === "vendedor") return areaVendedor(alvo, perfil);
     if (primeiro === "favoritos") return favoritos(alvo, perfil);
     if (primeiro === "listas") return listas(alvo, perfil);
     if (primeiro === "lista" && segundo) return lista(alvo, perfil, segundo);
@@ -2228,6 +2475,7 @@ window.Loja = (() => {
       if (segundo === "pedidos") return gerenciarPedidos(alvo);
       if (segundo === "pagamento") return configuracoesPagamento(alvo);
       if (segundo === "cupons") return cuponsAdmin(alvo);
+      if (segundo === "vendedores") return vendedoresAdmin(alvo);
       if (segundo === "devolucoes") return devolucoesAdmin(alvo);
       if (segundo === "relatorios") return relatoriosAdmin(alvo);
       if (segundo === "novo") return formularioProduto(alvo, perfil, null);
