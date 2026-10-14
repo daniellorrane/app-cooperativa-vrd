@@ -835,7 +835,8 @@ window.Loja = (() => {
     });
   }
 
-  async function formularioProduto(alvo, perfil, id) {
+  // vendedor: quando informado (objeto com id), o formulário é do vendedor: sem variações e salva na loja dele.
+  async function formularioProduto(alvo, perfil, id, vendedor = null) {
     carregando(alvo);
     const [{ data: categorias }, { data: atual, error }, { data: variacoes }] = await Promise.all([
       sb().from("loja_categorias").select("id, nome").order("ordem").order("nome"),
@@ -861,7 +862,7 @@ window.Loja = (() => {
       : `<label>Nome
            <input type="text" name="nome" required minlength="3" maxlength="150" value="${esc(atual?.nome || "")}" />
          </label>`;
-    const blocoVariacoes = atual && !ehVariacao
+    const blocoVariacoes = atual && !ehVariacao && !vendedor
       ? `<section class="cartao">
            <h2>Variações</h2>
            <p class="ajuda">Use variações para tamanhos, cores ou modelos. Cada variação tem preço, estoque e foto próprios. Quando há variações, o cooperado escolhe uma delas.</p>
@@ -889,7 +890,7 @@ window.Loja = (() => {
       : "";
 
     alvo.innerHTML = `
-      <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
+      <p class="rodape-form"><a href="${vendedor ? "#loja/vendedor" : "#loja/gerenciar"}">← ${vendedor ? "Voltar para minha loja" : "Voltar para gerenciar loja"}</a></p>
       <h1>${atual ? "Editar produto" : "Novo produto"}</h1>
       ${ehVariacao ? `<p class="ajuda">Variação de <strong>${esc(atual.nome.replace(/ \([^()]*\)$/, ""))}</strong>. <a href="#loja/gerenciar/${esc(atual.variacao_de)}">Voltar ao produto principal</a></p>` : ""}
       <form id="form-produto" class="formulario" novalidate>
@@ -1024,7 +1025,12 @@ window.Loja = (() => {
 
       const resposta = atual
         ? await sb().from("loja_produtos").update(dados).eq("id", produtoId)
-        : await sb().from("loja_produtos").insert({ id: produtoId, ...dados, criado_por: perfil.id });
+        : await sb().from("loja_produtos").insert({
+            id: produtoId,
+            ...dados,
+            criado_por: perfil.id,
+            ...(vendedor ? { vendedor_id: vendedor.id } : {}),
+          });
 
       if (resposta.error) {
         if (novaFoto) await sb().storage.from("loja-fotos").remove([caminho]);
@@ -1033,7 +1039,7 @@ window.Loja = (() => {
       }
 
       if (caminhoAntigo) await sb().storage.from("loja-fotos").remove([caminhoAntigo]);
-      location.hash = "#loja/gerenciar";
+      location.hash = vendedor ? "#loja/vendedor" : "#loja/gerenciar";
     });
 
     alvo.querySelector("#form-variacao")?.addEventListener("submit", async (ev) => {
@@ -2072,6 +2078,41 @@ window.Loja = (() => {
   }
 
   // Área do cooperado que quer vender. A RLS devolve só o próprio cadastro.
+  // Lista os produtos do vendedor (RLS deixa ver só os dele) com atalho para cadastrar.
+  async function blocoProdutosVendedor(vendedorId) {
+    const { data: produtos, error } = await sb().from("loja_produtos")
+      .select("id, nome, preco_centavos, preco_promo_centavos, estoque, ativo")
+      .eq("vendedor_id", vendedorId)
+      .is("variacao_de", null)
+      .order("nome");
+    if (error) return `<p class="erro" role="alert">${esc(error.message)}</p>`;
+    const lista = produtos || [];
+    return `
+      <section class="cartao">
+        <h2>Meus produtos</h2>
+        <p class="ajuda">Você controla preço, promoção, estoque, fotos e se o produto aparece. Os produtos só aparecem para os cooperados enquanto a sua loja estiver ativa.</p>
+        <a class="btn-primario" href="#loja/vendedor/produto/novo">Cadastrar produto</a>
+        ${lista.length
+          ? `<div class="lista">${lista.map((p) => `
+              <a class="item evento" href="#loja/vendedor/produto/${esc(p.id)}">
+                <strong>${esc(p.nome)}</strong>
+                <span class="ajuda">${reais(p.preco_promo_centavos ?? p.preco_centavos)} · estoque ${Number(p.estoque)}${p.ativo ? "" : " · oculto"}</span>
+              </a>`).join("")}</div>`
+          : '<p class="ajuda">Você ainda não cadastrou produtos.</p>'}
+      </section>`;
+  }
+
+  // Formulário de produto do vendedor aprovado. Quem não estiver aprovado volta para a área do vendedor.
+  async function produtoVendedor(alvo, perfil, id) {
+    carregando(alvo);
+    const { data: meu } = await sb().from("loja_vendedores").select("id, status").limit(1).maybeSingle();
+    if (!meu || meu.status !== "aprovado") {
+      location.hash = "#loja/vendedor";
+      return;
+    }
+    return formularioProduto(alvo, perfil, id && id !== "novo" ? id : null, meu);
+  }
+
   async function areaVendedor(alvo, perfil) {
     carregando(alvo);
     if (ehAdmin(perfil)) {
@@ -2105,7 +2146,8 @@ window.Loja = (() => {
           <span class="marcas"><span class="marca">${esc(SITUACAO_VENDEDOR[meu.status] || meu.status)}</span></span>
           <p class="texto-puro">${esc(mensagens[meu.status] || "")}</p>
           ${meu.descricao ? `<p class="texto-puro">${esc(meu.descricao)}</p>` : ""}
-        </section>`;
+        </section>
+        ${meu.status === "aprovado" ? await blocoProdutosVendedor(meu.id) : ""}`;
       return;
     }
 
@@ -2460,6 +2502,7 @@ window.Loja = (() => {
     const [, primeiro, segundo] = caminho;
     if (primeiro === "produto" && segundo) return produto(alvo, perfil, segundo);
     if (primeiro === "carrinho") return carrinho(alvo, perfil);
+    if (primeiro === "vendedor" && segundo === "produto") return produtoVendedor(alvo, perfil, caminho[3]);
     if (primeiro === "vendedor") return areaVendedor(alvo, perfil);
     if (primeiro === "favoritos") return favoritos(alvo, perfil);
     if (primeiro === "listas") return listas(alvo, perfil);
