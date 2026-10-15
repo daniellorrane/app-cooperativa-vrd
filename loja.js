@@ -1113,7 +1113,7 @@ window.Loja = (() => {
     carregando(alvo);
     const [{ data: p, error }, { data: config }, { data: devolucao }] = await Promise.all([
       sb().from("pedidos")
-        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, nf_status, nf_numero, nf_chave, nf_danfe, nf_erro, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade)")
+        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, nf_status, nf_numero, nf_chave, nf_danfe, nf_erro, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade), pedido_envios(origem_nome, servico, prazo_dias, frete_centavos, status, codigo_rastreio, enviado_em, entregue_em, criado_em)")
         .eq("id", id).maybeSingle(),
       sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
       sb().from("devolucoes_loja").select("id, tipo, motivo, status, observacao_admin").eq("pedido_id", id).maybeSingle(),
@@ -1199,6 +1199,19 @@ window.Loja = (() => {
          </section>`
       : "";
 
+    // Um envio por parte do pedido (cooperativa e vendedores). Pedido antigo pode não ter envios.
+    const envios = [...(p.pedido_envios || [])].sort((a, b) => (a.criado_em < b.criado_em ? -1 : 1));
+    const rotuloEnvio = { aguardando: "Aguardando envio", enviado: "Enviado", entregue: "Entregue", cancelado: "Cancelado" };
+    const blocoVariosEnvios = `
+      <div class="lista">
+        ${envios.map((e) => `
+          <article class="item">
+            <strong>${esc(e.origem_nome || "Cooperativa")}: ${esc(e.servico || "Entrega")}</strong>
+            <span class="ajuda">${esc(rotuloEnvio[e.status] || e.status)}${e.frete_centavos ? ` · Frete ${reais(e.frete_centavos)}` : " · Frete sem custo"}${e.prazo_dias ? ` · prazo de ${Number(e.prazo_dias)} dia(s) úteis após o envio` : ""}</span>
+            ${e.codigo_rastreio ? `<span>Rastreio: <strong>${esc(e.codigo_rastreio)}</strong></span>` : ""}
+          </article>`).join("")}
+      </div>`;
+
     const blocoEntrega = retirada
       ? `<section class="cartao">
            <h2>Retirada na cooperativa</h2>
@@ -1209,9 +1222,11 @@ window.Loja = (() => {
          </section>`
       : `<section class="cartao">
            <h2>Entrega</h2>
-           <p><strong>${esc(p.frete_servico || "Entrega")}</strong></p>
+           ${envios.length > 1
+             ? `<p class="ajuda">Seu pedido sai em ${envios.length} partes, uma para cada vendedor ou para a cooperativa.</p>${blocoVariosEnvios}`
+             : `<p><strong>${esc(p.frete_servico || "Entrega")}</strong></p>
            ${p.prazo_dias ? `<p class="ajuda">Prazo estimado: ${Number(p.prazo_dias)} dia(s) úteis após o envio</p>` : ""}
-           ${p.codigo_rastreio ? `<p>Código de rastreio: <strong>${esc(p.codigo_rastreio)}</strong></p>` : ""}
+           ${p.codigo_rastreio ? `<p>Código de rastreio: <strong>${esc(p.codigo_rastreio)}</strong></p>` : ""}`}
            ${e ? `<p class="texto-puro">${esc(e.logradouro)}, ${esc(e.numero)}${e.complemento ? " - " + esc(e.complemento) : ""}<br />${esc(e.bairro)} · ${esc(e.cidade)}/${esc(e.uf)} · CEP ${esc(e.cep)}</p>` : ""}
          </section>`;
 
@@ -1753,8 +1768,10 @@ window.Loja = (() => {
     }
 
     const subtotal = linhas.reduce((soma, i) => soma + i.quantidade * (i.produto.preco_promo_centavos ?? i.produto.preco_centavos), 0);
+    // Cotação do servidor: um grupo por vendedor (e um da cooperativa), cada um com suas opções de entrega.
     let cotacao = null;
-    let frete = null;
+    // Escolha de entrega de cada grupo: chave do grupo -> opção escolhida
+    let escolhas = {};
     // Cupom aplicado: o servidor confere de novo na hora de criar o pedido.
     let cupom = null;
 
@@ -1798,16 +1815,23 @@ window.Loja = (() => {
     const form = alvo.querySelector("#form-entrega");
     const campoCep = form.querySelector("[name=cep]");
     const enderecoBox = alvo.querySelector("#endereco");
+
+    // Todas as partes do pedido precisam de uma forma de entrega escolhida
+    const gruposCompletos = () => !!cotacao && cotacao.grupos.every((g) => escolhas[g.chave]);
+    const freteEscolhido = () => Object.values(escolhas).reduce((soma, o) => soma + o.preco_centavos, 0);
+    const precisaEndereco = () => Object.values(escolhas).some((o) => o.metodo !== "retirada");
+
     const atualizarTotal = () => {
       const botaoContinuar = alvo.querySelector("#continuar");
-      if (!frete) {
+      if (!gruposCompletos()) {
         alvo.querySelector("#total").textContent = "";
         botaoContinuar.disabled = true;
         return;
       }
       const desconto = cupom?.desconto_centavos || 0;
-      const total = subtotal - desconto + frete.preco_centavos;
-      alvo.querySelector("#total").textContent = `Total: ${reais(total)} (produtos ${reais(subtotal)}${desconto ? ` − desconto ${reais(desconto)}` : ""} + entrega ${reais(frete.preco_centavos)})`;
+      const frete = freteEscolhido();
+      const total = subtotal - desconto + frete;
+      alvo.querySelector("#total").textContent = `Total: ${reais(total)} (produtos ${reais(subtotal)}${desconto ? ` − desconto ${reais(desconto)}` : ""} + entrega ${reais(frete)})`;
       botaoContinuar.disabled = false;
     };
 
@@ -1856,19 +1880,23 @@ window.Loja = (() => {
       if (falha) return erroNa(alvo, await mensagemFuncao(falha));
 
       cotacao = data;
-      frete = null;
+      escolhas = {};
+      const varios = data.grupos.length > 1;
       alvo.querySelector("#opcoes").innerHTML = `
-        <fieldset class="opcoes-entrega">
-          <legend>Escolha a forma de entrega</legend>
-          ${data.opcoes.map((o) => `
-            <label class="opcao-entrega">
-              <input type="radio" name="opcao" value="${esc(o.id)}" data-metodo="${esc(o.metodo)}" data-preco="${Number(o.preco_centavos)}" />
-              <span>
-                <strong>${esc(o.nome)}</strong>
-                <span class="ajuda">${o.preco_centavos ? reais(o.preco_centavos) : "Sem custo"}${o.prazo_dias ? ` · prazo de ${Number(o.prazo_dias)} dia(s) úteis` : ""}</span>
-              </span>
-            </label>`).join("")}
-        </fieldset>`;
+        ${varios ? '<p class="ajuda">Seu pedido sai em partes. Cada vendedor envia os produtos dele, então escolha a entrega de cada parte.</p>' : ""}
+        ${data.grupos.map((g) => `
+          <fieldset class="opcoes-entrega" data-grupo="${esc(g.chave)}">
+            <legend>${varios ? `Entrega de ${esc(g.nome)}` : "Escolha a forma de entrega"}</legend>
+            <p class="ajuda">${g.itens.map((i) => `${esc(i.nome)}${i.quantidade > 1 ? ` (${Number(i.quantidade)})` : ""}`).join(", ")}</p>
+            ${g.opcoes.map((o) => `
+              <label class="opcao-entrega">
+                <input type="radio" name="opcao-${esc(g.chave)}" value="${esc(o.id)}" data-grupo="${esc(g.chave)}" />
+                <span>
+                  <strong>${esc(o.nome)}</strong>
+                  <span class="ajuda">${o.gratis ? "Frete grátis" : o.preco_centavos ? reais(o.preco_centavos) : "Sem custo"}${o.prazo_dias ? ` · prazo de ${Number(o.prazo_dias)} dia(s) úteis` : ""}</span>
+                </span>
+              </label>`).join("")}
+          </fieldset>`).join("")}`;
 
       // Preenche o endereço pelo CEP (quando o serviço responde). O cooperado confere e completa.
       const dadosCep = await buscarCep(cep);
@@ -1883,19 +1911,22 @@ window.Loja = (() => {
     });
 
     alvo.querySelector("#opcoes").addEventListener("change", (ev) => {
-      const escolhida = ev.target.closest("input[name=opcao]");
-      if (!escolhida) return;
-      frete = { id: escolhida.value, metodo: escolhida.dataset.metodo, preco_centavos: Number(escolhida.dataset.preco) };
-      enderecoBox.hidden = frete.metodo === "retirada";
+      const escolhida = ev.target.closest("input[type=radio][data-grupo]");
+      if (!escolhida || !cotacao) return;
+      const grupo = cotacao.grupos.find((g) => g.chave === escolhida.dataset.grupo);
+      const opcao = grupo?.opcoes.find((o) => o.id === escolhida.value);
+      if (!opcao) return;
+      escolhas[grupo.chave] = opcao;
+      enderecoBox.hidden = !precisaEndereco();
       atualizarTotal();
     });
 
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!cotacao || !frete) return erroNa(alvo, "Escolha uma forma de entrega.");
+      if (!gruposCompletos()) return erroNa(alvo, "Escolha a forma de entrega de cada parte do pedido.");
 
       let endereco = null;
-      if (frete.metodo !== "retirada") {
+      if (precisaEndereco()) {
         const f = new FormData(form);
         endereco = {
           cep: campoCep.value.replace(/\D/g, ""),
@@ -1911,11 +1942,12 @@ window.Loja = (() => {
         }
       }
 
+      const escolhasEnvio = Object.fromEntries(Object.entries(escolhas).map(([chave, o]) => [chave, o.id]));
       const botao = alvo.querySelector("#continuar");
       botao.disabled = true;
       const { data: pedidoId, error: falha } = await sb().rpc("criar_pedido_loja", {
         p_cotacao: cotacao.cotacao_id,
-        p_opcao: frete.id,
+        p_escolhas: escolhasEnvio,
         p_endereco: endereco,
         ...(cupom ? { p_cupom: cupom.codigo } : {}),
       });
@@ -2182,6 +2214,99 @@ window.Loja = (() => {
     return formularioProduto(alvo, perfil, id && id !== "novo" ? id : null, meu);
   }
 
+  // Regra de frete grátis dos itens do vendedor: a partir de quanto o pedido dele sai sem frete.
+  function blocoFreteVendedor(meu) {
+    const minimo = meu.frete_gratis_minimo_centavos;
+    return `
+      <section class="cartao">
+        <h2>Frete grátis</h2>
+        <p class="ajuda">Defina a partir de quanto o pedido dos seus produtos sai sem frete para o cooperado. Deixe vazio para não oferecer frete grátis. Quem envia paga o frete da transportadora, por isso defina com cuidado.</p>
+        <form id="form-frete-gratis" class="formulario" novalidate>
+          <label>Valor mínimo para frete grátis (R$) <small>(vazio = sem frete grátis)</small>
+            <input type="text" name="minimo" inputmode="decimal" value="${minimo === null || minimo === undefined ? "" : (minimo / 100).toFixed(2).replace(".", ",")}" />
+          </label>
+          <button type="submit" class="btn-ghost">Salvar regra de frete</button>
+          <p class="ajuda" id="frete-gratis-msg" role="status"></p>
+        </form>
+      </section>`;
+  }
+
+  // Envios que o vendedor precisa fazer: registra o código de rastreio quando postar o pacote.
+  async function blocoEnviosVendedor() {
+    const { data, error } = await sb().rpc("meus_envios_loja");
+    if (error) return `<p class="erro" role="alert">${esc(error.message)}</p>`;
+    const lista = data || [];
+    const rotulo = { aguardando: "Aguardando envio", enviado: "Enviado", entregue: "Entregue", cancelado: "Cancelado" };
+    return `
+      <section class="cartao">
+        <h2>Envios dos meus produtos</h2>
+        <p class="ajuda">Quando postar o pacote, informe o código de rastreio. O cooperado acompanha pelo pedido.</p>
+        ${lista.length
+          ? `<div class="lista">${lista.map((e) => `
+              <article class="item">
+                <strong>Pedido ${esc(e.pedido_codigo)}</strong>
+                <span class="ajuda">${dataHora(e.criado_em)} · ${esc(e.servico || "Entrega")} · frete ${reais(e.frete_centavos)} · ${esc(rotulo[e.status] || e.status)}</span>
+                ${e.codigo_rastreio ? `<span>Rastreio: <strong>${esc(e.codigo_rastreio)}</strong></span>` : ""}
+                ${e.status === "aguardando"
+                  ? `<form class="formulario" data-envio="${esc(e.id)}" novalidate>
+                       <label>Código de rastreio <input type="text" name="codigo" maxlength="60" autocomplete="off" /></label>
+                       <button type="submit" class="btn-ghost">Marcar como enviado</button>
+                     </form>`
+                  : ""}
+              </article>`).join("")}</div>`
+          : '<p class="ajuda">Nenhum envio por enquanto.</p>'}
+      </section>`;
+  }
+
+  function ligarFreteEEnvios(alvo, perfil) {
+    const formFrete = alvo.querySelector("#form-frete-gratis");
+    if (formFrete) {
+      formFrete.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const campo = formFrete.querySelector("[name=minimo]");
+        const msg = alvo.querySelector("#frete-gratis-msg");
+        const texto = campo.value.trim();
+        let minimo = null;
+        if (texto) {
+          minimo = parseReais(texto);
+          if (!Number.isFinite(minimo) || minimo < 0) {
+            msg.textContent = "Informe um valor válido, por exemplo 150,00.";
+            msg.className = "erro";
+            return;
+          }
+        }
+        const botao = formFrete.querySelector("button[type=submit]");
+        botao.disabled = true;
+        const { error } = await sb().rpc("definir_frete_gratis_vendedor_loja", { p_minimo_centavos: minimo });
+        botao.disabled = false;
+        if (error) {
+          msg.textContent = error.message;
+          msg.className = "erro";
+          return;
+        }
+        msg.textContent = minimo === null ? "Regra salva: sem frete grátis." : "Regra salva.";
+        msg.className = "ajuda";
+      });
+    }
+
+    alvo.querySelectorAll("form[data-envio]").forEach((form) => {
+      form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const codigo = form.querySelector("[name=codigo]").value.trim();
+        if (!codigo) return erroNa(alvo, "Informe o código de rastreio.");
+        const botao = form.querySelector("button[type=submit]");
+        botao.disabled = true;
+        const { error } = await sb().rpc("marcar_envio_vendedor_loja", { p_envio: form.dataset.envio, p_codigo: codigo });
+        if (error) {
+          botao.disabled = false;
+          return erroNa(alvo, error.message);
+        }
+        await areaVendedor(alvo, perfil);
+        avisoNa(alvo, "Envio marcado como enviado.");
+      });
+    });
+  }
+
   async function areaVendedor(alvo, perfil) {
     carregando(alvo);
     if (ehAdmin(perfil)) {
@@ -2193,7 +2318,7 @@ window.Loja = (() => {
     }
 
     const { data: meu, error } = await sb().from("loja_vendedores")
-      .select("id, nome_loja, descricao, cep_origem, status")
+      .select("id, nome_loja, descricao, cep_origem, status, frete_gratis_minimo_centavos")
       .limit(1).maybeSingle();
     if (error) {
       alvo.innerHTML = `<p class="erro" role="alert">${esc(error.message)}</p>`;
@@ -2216,7 +2341,8 @@ window.Loja = (() => {
           <p class="texto-puro">${esc(mensagens[meu.status] || "")}</p>
           ${meu.descricao ? `<p class="texto-puro">${esc(meu.descricao)}</p>` : ""}
         </section>
-        ${meu.status === "aprovado" ? `${await blocoExtratoVendedor()}${await blocoProdutosVendedor(meu.id)}` : ""}`;
+        ${meu.status === "aprovado" ? `${blocoFreteVendedor(meu)}${await blocoEnviosVendedor()}${await blocoExtratoVendedor()}${await blocoProdutosVendedor(meu.id)}` : ""}`;
+      ligarFreteEEnvios(alvo, perfil);
       return;
     }
 
