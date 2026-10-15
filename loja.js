@@ -1440,7 +1440,7 @@ window.Loja = (() => {
   async function gerenciarPedidos(alvo) {
     carregando(alvo);
     const { data, error } = await sb().from("pedidos")
-      .select("id, codigo, status, metodo_entrega, frete_servico, endereco, codigo_rastreio, total_centavos, criado_em, observacao_admin, usuarios(nome_completo), pedido_itens(nome_snapshot, quantidade)")
+      .select("id, codigo, status, metodo_entrega, frete_servico, endereco, codigo_rastreio, total_centavos, criado_em, observacao_admin, usuarios(nome_completo), pedido_itens(nome_snapshot, quantidade), pedido_envios(id, origem_nome, servico, status, codigo_rastreio, vendedor_id, criado_em)")
       .order("criado_em", { ascending: false })
       .limit(60);
 
@@ -1458,7 +1458,11 @@ window.Loja = (() => {
         ? `<div class="lista">
              ${data.map((p) => {
                const acoes = ACOES_PEDIDO(p);
-               const envio = p.status === "em_separacao" && p.metodo_entrega !== "retirada";
+               const emSeparacao = p.status === "em_separacao" && p.metodo_entrega !== "retirada";
+               const envios = [...(p.pedido_envios || [])].sort((a, b) => (a.criado_em < b.criado_em ? -1 : 1));
+               // Rastreio obrigatório só em pedido de uma parte enviado por transportadora
+               const rastreioObrigatorio = envios.length === 1 && p.metodo_entrega === "transportadora";
+               const rotuloEnvio = { aguardando: "Aguardando envio", enviado: "Enviado", entregue: "Entregue", cancelado: "Cancelado" };
                return `
                  <article class="item avaliacao-item" data-pedido="${esc(p.id)}">
                    <span class="evento-texto">
@@ -1473,13 +1477,21 @@ window.Loja = (() => {
                      ${(p.pedido_itens || []).map((i) => `<li>${Number(i.quantidade)} × ${esc(i.nome_snapshot)}</li>`).join("")}
                    </ul>
                    ${p.observacao_admin ? `<p class="erro">${esc(p.observacao_admin)}</p>` : ""}
-                   ${envio ? `
-                     <label>Código de rastreio <small>(obrigatório para transportadora)</small>
-                       <input type="text" data-rastreio maxlength="60" />
-                     </label>
-                     <div class="acoes-evento">
-                       <button type="button" class="btn-primario" data-enviar="${esc(p.id)}">Marcar como enviado</button>
-                     </div>` : ""}
+                   ${p.metodo_entrega === "retirada" ? "" : `
+                     <div class="lista">
+                       ${envios.map((e) => `
+                         <article class="item">
+                           <strong>${esc(e.origem_nome || "Cooperativa")}: ${esc(e.servico || "Entrega")}</strong>
+                           <span class="ajuda">${esc(rotuloEnvio[e.status] || e.status)}${e.codigo_rastreio ? ` · Rastreio ${esc(e.codigo_rastreio)}` : ""}</span>
+                           ${emSeparacao && e.status === "aguardando" ? `
+                             <label>Código de rastreio${rastreioObrigatorio ? "" : " <small>(opcional)</small>"}
+                               <input type="text" data-rastreio-envio="${esc(e.id)}" maxlength="60" />
+                             </label>
+                             <div class="acoes-evento">
+                               <button type="button" class="btn-primario" data-envio-admin="${esc(e.id)}">Marcar esta parte como enviada</button>
+                             </div>` : ""}
+                         </article>`).join("") || '<p class="ajuda">Pedido sem envio cadastrado.</p>'}
+                     </div>`}
                    <div class="acoes-evento">
                      ${acoes.map(([status, rotulo]) =>
                        `<button type="button" class="btn-ghost" data-pedido-id="${esc(p.id)}" data-status="${status}">${rotulo}</button>`).join("")}
@@ -1489,13 +1501,13 @@ window.Loja = (() => {
            </div>`
         : '<p class="ajuda">Nenhum pedido ainda.</p>'}`;
 
-    alvo.querySelectorAll("[data-enviar]").forEach((botao) => {
+    alvo.querySelectorAll("[data-envio-admin]").forEach((botao) => {
       botao.addEventListener("click", async () => {
-        const campo = botao.closest("[data-pedido]").querySelector("[data-rastreio]");
+        const campo = alvo.querySelector(`[data-rastreio-envio="${botao.dataset.envioAdmin}"]`);
         botao.disabled = true;
-        const { error: falha } = await sb().rpc("marcar_envio_loja", {
-          p_pedido: botao.dataset.enviar,
-          p_codigo: campo.value.trim() || null,
+        const { error: falha } = await sb().rpc("marcar_envio_admin_loja", {
+          p_envio: botao.dataset.envioAdmin,
+          p_codigo: campo?.value.trim() || null,
         });
         if (falha) {
           botao.disabled = false;
