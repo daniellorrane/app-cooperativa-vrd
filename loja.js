@@ -10,6 +10,12 @@ window.Loja = (() => {
   const ICONE_SACOLA = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2"/></svg>';
   const ERRO_GERAL = '<p class="erro erro-geral" role="alert" hidden></p>';
   const AVISO_GERAL = '<p class="aviso-geral" role="status" hidden></p>';
+  // Situação da entrega por parte do pedido (fase 19)
+  const SITUACAO_ENVIO = { aguardando: "Aguardando envio", enviado: "Recolhido / enviado", em_transporte: "Em transporte", saiu_entrega: "Saiu para entrega", tentativa_falhou: "Tentativa de entrega falhou", devolvido: "Devolvido ao remetente", entregue: "Entregue", cancelado: "Cancelado" };
+  const SITUACOES_MANUAIS = [["em_transporte", "Em transporte"], ["saiu_entrega", "Saiu para entrega"], ["tentativa_falhou", "Tentativa de entrega falhou"], ["devolvido", "Devolvido ao remetente"], ["entregue", "Entregue"]];
+  const SITUACOES_FINAIS = ["entregue", "devolvido", "cancelado"];
+  // Provedores de rastreio que a tela oferece. Novos entram aqui quando o adaptador estiver pronto.
+  const PROVEDORES_RASTREIO = [{ codigo: "nenhum", nome: "Nenhum (só Melhor Envio e registro manual)" }];
 
   const esc = (texto) => String(texto ?? "").replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
@@ -1113,7 +1119,7 @@ window.Loja = (() => {
     carregando(alvo);
     const [{ data: p, error }, { data: config }, { data: devolucao }] = await Promise.all([
       sb().from("pedidos")
-        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade, vendedor_id), pedido_envios(origem_nome, servico, prazo_dias, frete_centavos, status, codigo_rastreio, enviado_em, entregue_em, criado_em)")
+        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade, vendedor_id), pedido_envios(id, origem_nome, servico, prazo_dias, frete_centavos, status, codigo_rastreio, enviado_em, entregue_em, criado_em, tentativas, ultimo_evento)")
         .eq("id", id).maybeSingle(),
       sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
       sb().from("devolucoes_loja").select("id, tipo, motivo, status, observacao_admin").eq("pedido_id", id).maybeSingle(),
@@ -1244,7 +1250,7 @@ window.Loja = (() => {
 
     // Um envio por parte do pedido (cooperativa e vendedores). Pedido antigo pode não ter envios.
     const envios = [...(p.pedido_envios || [])].sort((a, b) => (a.criado_em < b.criado_em ? -1 : 1));
-    const rotuloEnvio = { aguardando: "Aguardando envio", enviado: "Enviado", entregue: "Entregue", cancelado: "Cancelado" };
+    const rotuloEnvio = SITUACAO_ENVIO;
     const blocoVariosEnvios = `
       <div class="lista">
         ${envios.map((e) => `
@@ -1273,6 +1279,27 @@ window.Loja = (() => {
            ${e ? `<p class="texto-puro">${esc(e.logradouro)}, ${esc(e.numero)}${e.complemento ? " - " + esc(e.complemento) : ""}<br />${esc(e.bairro)} · ${esc(e.cidade)}/${esc(e.uf)} · CEP ${esc(e.cep)}</p>` : ""}
          </section>`;
 
+    // Linha do tempo de cada parte (entrega, tentativas e devolução)
+    const idsEnvios = (p.pedido_envios || []).map((e) => e.id).filter(Boolean);
+    const { data: eventosEnvio } = idsEnvios.length
+      ? await sb().from("envio_eventos").select("envio_id, status, descricao, ocorrido_em").in("envio_id", idsEnvios).order("ocorrido_em", { ascending: true })
+      : { data: [] };
+    const eventosPorEnvio = (eventosEnvio || []).reduce((mapa, ev) => { (mapa[ev.envio_id] ||= []).push(ev); return mapa; }, {});
+    const blocoAcompanhamento = !retirada && envios.length
+      ? `<section class="cartao">
+           <h2>Acompanhamento</h2>
+           ${envios.map((e) => `
+             <article class="item">
+               <strong>${esc(e.origem_nome || "Cooperativa")}: ${esc(SITUACAO_ENVIO[e.status] || e.status)}</strong>
+               ${e.status === "tentativa_falhou" ? `<span class="ajuda">Tentativas de entrega: ${Number(e.tentativas || 0)} de 3</span>` : ""}
+               ${e.codigo_rastreio ? `<span>Rastreio: <strong>${esc(e.codigo_rastreio)}</strong></span>` : ""}
+               ${(eventosPorEnvio[e.id] || []).length
+                 ? `<ol>${eventosPorEnvio[e.id].map((ev) => `<li><span class="ajuda">${dataHora(ev.ocorrido_em)}</span> ${esc(SITUACAO_ENVIO[ev.status] || ev.status)}${ev.descricao ? ` · ${esc(ev.descricao)}` : ""}</li>`).join("")}</ol>`
+                 : '<p class="ajuda">Ainda sem atualizações da transportadora.</p>'}
+             </article>`).join("")}
+         </section>`
+      : "";
+
     alvo.innerHTML = `
       <p class="rodape-form"><a href="#loja/pedidos">← Meus pedidos</a></p>
       <h1>Pedido ${esc(p.codigo)}</h1>
@@ -1294,6 +1321,7 @@ window.Loja = (() => {
         <p><strong>Total: ${reais(p.total_centavos)}</strong></p>
       </section>
       ${blocoEntrega}
+      ${blocoAcompanhamento}
       ${blocoDevolucao}
       ${blocoNotaCooperado}
       ${blocoNotaAdmin}
@@ -1440,7 +1468,7 @@ window.Loja = (() => {
   async function gerenciarPedidos(alvo) {
     carregando(alvo);
     const { data, error } = await sb().from("pedidos")
-      .select("id, codigo, status, metodo_entrega, frete_servico, endereco, codigo_rastreio, total_centavos, criado_em, observacao_admin, usuarios(nome_completo), pedido_itens(nome_snapshot, quantidade), pedido_envios(id, origem_nome, servico, status, codigo_rastreio, vendedor_id, criado_em)")
+      .select("id, codigo, status, metodo_entrega, frete_servico, endereco, codigo_rastreio, total_centavos, criado_em, observacao_admin, usuarios(nome_completo), pedido_itens(nome_snapshot, quantidade), pedido_envios(id, origem_nome, servico, status, codigo_rastreio, vendedor_id, criado_em, tentativas, ultimo_evento)")
       .order("criado_em", { ascending: false })
       .limit(60);
 
@@ -1462,7 +1490,7 @@ window.Loja = (() => {
                const envios = [...(p.pedido_envios || [])].sort((a, b) => (a.criado_em < b.criado_em ? -1 : 1));
                // Rastreio obrigatório só em pedido de uma parte enviado por transportadora
                const rastreioObrigatorio = envios.length === 1 && p.metodo_entrega === "transportadora";
-               const rotuloEnvio = { aguardando: "Aguardando envio", enviado: "Enviado", entregue: "Entregue", cancelado: "Cancelado" };
+               const rotuloEnvio = SITUACAO_ENVIO;
                return `
                  <article class="item avaliacao-item" data-pedido="${esc(p.id)}">
                    <span class="evento-texto">
@@ -1482,7 +1510,8 @@ window.Loja = (() => {
                        ${envios.map((e) => `
                          <article class="item">
                            <strong>${esc(e.origem_nome || "Cooperativa")}: ${esc(e.servico || "Entrega")}</strong>
-                           <span class="ajuda">${esc(rotuloEnvio[e.status] || e.status)}${e.codigo_rastreio ? ` · Rastreio ${esc(e.codigo_rastreio)}` : ""}</span>
+                           <span class="ajuda">${esc(rotuloEnvio[e.status] || e.status)}${e.codigo_rastreio ? ` · Rastreio ${esc(e.codigo_rastreio)}` : ""}${e.status === "tentativa_falhou" ? ` · Tentativas: ${Number(e.tentativas || 0)} de 3` : ""}</span>
+                           ${e.ultimo_evento ? `<span class="ajuda">Última atualização: ${esc(e.ultimo_evento)}</span>` : ""}
                            ${emSeparacao && e.status === "aguardando" ? `
                              <label>Código de rastreio${rastreioObrigatorio ? "" : " <small>(opcional)</small>"}
                                <input type="text" data-rastreio-envio="${esc(e.id)}" maxlength="60" />
@@ -1490,6 +1519,14 @@ window.Loja = (() => {
                              <div class="acoes-evento">
                                <button type="button" class="btn-primario" data-envio-admin="${esc(e.id)}">Marcar esta parte como enviada</button>
                              </div>` : ""}
+                           ${e.status !== "aguardando" && !SITUACOES_FINAIS.includes(e.status) ? `
+                             <form class="formulario" data-situacao-envio="${esc(e.id)}" novalidate>
+                               <label>Registrar situação
+                                 <select name="status">${SITUACOES_MANUAIS.map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join("")}</select>
+                               </label>
+                               <label>Detalhe <small>(opcional)</small> <input type="text" name="descricao" maxlength="200" autocomplete="off" /></label>
+                               <button type="submit" class="btn-ghost">Registrar</button>
+                             </form>` : ""}
                          </article>`).join("") || '<p class="ajuda">Pedido sem envio cadastrado.</p>'}
                      </div>`}
                    <div class="acoes-evento">
@@ -1508,6 +1545,25 @@ window.Loja = (() => {
         const { error: falha } = await sb().rpc("marcar_envio_admin_loja", {
           p_envio: botao.dataset.envioAdmin,
           p_codigo: campo?.value.trim() || null,
+        });
+        if (falha) {
+          botao.disabled = false;
+          return erroNa(alvo, falha.message);
+        }
+        gerenciarPedidos(alvo);
+      });
+    });
+
+    alvo.querySelectorAll("form[data-situacao-envio]").forEach((form) => {
+      form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const f = new FormData(form);
+        const botao = form.querySelector("button[type=submit]");
+        botao.disabled = true;
+        const { error: falha } = await sb().rpc("registrar_situacao_envio_admin_loja", {
+          p_envio: form.dataset.situacaoEnvio,
+          p_status: String(f.get("status")),
+          p_descricao: String(f.get("descricao") || "").trim() || null,
         });
         if (falha) {
           botao.disabled = false;
@@ -1601,6 +1657,28 @@ window.Loja = (() => {
         </label>
         <p class="ajuda">Endereço de notificação para cadastrar no Mercado Pago:<br />
           <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-pagamento-webhook</code></p>
+
+        <h2>Rastreio de entregas</h2>
+        <p class="ajuda">A Melhor Envio avisa sozinha as etiquetas compradas por ela. Para os demais envios, escolha um provedor de rastreio.</p>
+        <label>Provedor de rastreio
+          <select name="rastreio_provedor">
+            ${PROVEDORES_RASTREIO.map((p) => `<option value="${esc(p.codigo)}" ${selecionado(v.rastreio_provedor || "nenhum", p.codigo)}>${esc(p.nome)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Token do provedor de rastreio <small>(preencha só para trocar)</small>
+          <input type="text" name="rastreio_provedor_token" autocomplete="off" spellcheck="false" maxlength="300" />
+        </label>
+        <label>Pedido devolvido ao remetente
+          <select name="devolvido_acao">
+            <option value="aguardando_admin" ${selecionado(v.devolvido_acao === "reembolso" ? "reembolso" : "aguardando_admin", "aguardando_admin")}>Aguardar decisão do administrador</option>
+            <option value="reembolso" ${selecionado(v.devolvido_acao === "reembolso" ? "reembolso" : "aguardando_admin", "reembolso")}>Marcar para reembolso</option>
+          </select>
+        </label>
+        <label>Chave secreta do webhook da Melhor Envio <small>(preencha só para trocar)</small>
+          <input type="text" name="melhor_envio_webhook_secret" autocomplete="off" spellcheck="false" maxlength="300" />
+        </label>
+        <p class="ajuda">Endereço para cadastrar no aplicativo da Melhor Envio:<br />
+          <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-rastreio-webhook</code></p>
 
         <h2>Transportadoras (Melhor Envio)</h2>
         <label>Ambiente
@@ -1736,6 +1814,7 @@ window.Loja = (() => {
         "fiscal_logradouro", "fiscal_numero", "fiscal_bairro", "fiscal_municipio", "fiscal_uf", "fiscal_cep",
         "fiscal_natureza_operacao", "fiscal_cfop", "fiscal_csosn", "fiscal_cst_icms", "fiscal_icms_aliquota",
         "fiscal_origem", "fiscal_cst_pis", "fiscal_cst_cofins",
+        "rastreio_provedor", "devolvido_acao",
       ];
       const linhasSalvar = campos.map((chave) => ({ chave, valor: String(f.get(chave) || "").trim(), atualizado_em: new Date().toISOString() }));
       linhasSalvar.push({ chave: "cep_origem", valor: cepOrigem, atualizado_em: new Date().toISOString() });
@@ -1748,7 +1827,7 @@ window.Loja = (() => {
         return erroNa(alvo, falha.message);
       }
 
-      for (const nome of ["mp_access_token", "mp_webhook_secret", "melhor_envio_token", "focus_nfe_token"]) {
+      for (const nome of ["mp_access_token", "mp_webhook_secret", "melhor_envio_token", "focus_nfe_token", "melhor_envio_webhook_secret", "rastreio_provedor_token"]) {
         const valor = String(f.get(nome) || "").trim();
         if (!valor) continue;
         const { error: falhaSegredo } = await sb().rpc("salvar_segredo_loja", { p_nome: nome, p_valor: valor });
@@ -2300,7 +2379,7 @@ window.Loja = (() => {
     const { data, error } = await sb().rpc("meus_envios_loja");
     if (error) return `<p class="erro" role="alert">${esc(error.message)}</p>`;
     const lista = data || [];
-    const rotulo = { aguardando: "Aguardando envio", enviado: "Enviado", entregue: "Entregue", cancelado: "Cancelado" };
+    const rotulo = SITUACAO_ENVIO;
     return `
       <section class="cartao">
         <h2>Envios dos meus produtos</h2>
@@ -2317,9 +2396,40 @@ window.Loja = (() => {
                        <button type="submit" class="btn-ghost">Marcar como enviado</button>
                      </form>`
                   : ""}
+                ${e.status !== "aguardando" && !SITUACOES_FINAIS.includes(e.status)
+                  ? `<form class="formulario" data-situacao-vendedor="${esc(e.id)}" novalidate>
+                       <label>Registrar situação
+                         <select name="status">${SITUACOES_MANUAIS.map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join("")}</select>
+                       </label>
+                       <label>Detalhe <small>(opcional)</small> <input type="text" name="descricao" maxlength="200" autocomplete="off" /></label>
+                       <button type="submit" class="btn-ghost">Registrar</button>
+                     </form>`
+                  : ""}
               </article>`).join("")}</div>`
           : '<p class="ajuda">Nenhum envio por enquanto.</p>'}
       </section>`;
+  }
+
+  function ligarSituacaoVendedor(alvo, perfil) {
+    alvo.querySelectorAll("form[data-situacao-vendedor]").forEach((form) => {
+      form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const f = new FormData(form);
+        const botao = form.querySelector("button[type=submit]");
+        botao.disabled = true;
+        const { error: falha } = await sb().rpc("registrar_situacao_envio_vendedor_loja", {
+          p_envio: form.dataset.situacaoVendedor,
+          p_status: String(f.get("status")),
+          p_descricao: String(f.get("descricao") || "").trim() || null,
+        });
+        if (falha) {
+          botao.disabled = false;
+          return erroNa(alvo, falha.message);
+        }
+        await areaVendedor(alvo, perfil);
+        avisoNa(alvo, "Situação registrada.");
+      });
+    });
   }
 
   function ligarFreteEEnvios(alvo, perfil) {
@@ -2621,6 +2731,7 @@ window.Loja = (() => {
       ligarFreteEEnvios(alvo, perfil);
       ligarCuponsVendedor(alvo, perfil);
       if (meu.status === "aprovado") ligarNotaVendedor(alvo, perfil);
+      ligarSituacaoVendedor(alvo, perfil);
       return;
     }
 
