@@ -205,7 +205,7 @@ begin
   update public.pedido_envios e
      set status = p_status,
          tentativas = case when p_status = 'tentativa_falhou' then least(e.tentativas + 1, 3) else e.tentativas end,
-         enviado_em = case when p_status <> 'enviado' then coalesce(e.enviado_em, v_quando) else coalesce(e.enviado_em, v_quando) end,
+         enviado_em = coalesce(e.enviado_em, v_quando),
          entregue_em = case when p_status = 'entregue' then v_quando else e.entregue_em end,
          atualizado_em = v_quando,
          ultimo_evento = p_descricao
