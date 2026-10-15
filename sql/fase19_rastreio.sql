@@ -58,7 +58,20 @@ create policy eventos_vendedor_ler on public.envio_eventos for select to authent
 
 revoke all on public.envio_eventos from anon;
 
--- 3. Parâmetros do administrador (valores padrão; a tela de configuração altera)
+-- 3. Parâmetros do administrador: aceita as chaves novas e grava os valores padrão (a tela de configuração altera)
+alter table public.loja_configuracoes drop constraint if exists loja_configuracoes_chave_check;
+alter table public.loja_configuracoes add constraint loja_configuracoes_chave_check check (chave = any (array[
+  'nome_loja', 'endereco_retirada', 'horario_retirada', 'minutos_expiracao_pedido', 'url_publica_app',
+  'mp_public_key', 'cep_origem', 'entrega_local_ativa', 'entrega_local_ceps', 'taxa_entrega_local_centavos',
+  'melhor_envio_sandbox',
+  'fiscal_ativo', 'fiscal_ambiente', 'fiscal_cnpj', 'fiscal_razao_social', 'fiscal_ie', 'fiscal_regime',
+  'fiscal_logradouro', 'fiscal_numero', 'fiscal_bairro', 'fiscal_municipio', 'fiscal_uf', 'fiscal_cep',
+  'fiscal_natureza_operacao', 'fiscal_cfop', 'fiscal_csosn', 'fiscal_cst_icms', 'fiscal_icms_aliquota',
+  'fiscal_origem', 'fiscal_cst_pis', 'fiscal_cst_cofins',
+  'comissao_padrao_percentual', 'frete_gratis_minimo_centavos',
+  'rastreio_provedor', 'devolvido_acao'
+]::text[]));
+
 insert into public.loja_configuracoes (chave, valor)
 select 'rastreio_provedor', 'nenhum'
  where not exists (select 1 from public.loja_configuracoes where chave = 'rastreio_provedor');
