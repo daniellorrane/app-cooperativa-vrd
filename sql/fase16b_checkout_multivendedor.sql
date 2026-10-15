@@ -232,8 +232,8 @@ begin
 end;
 $$;
 
-revoke execute on function public.criar_pedido_loja(uuid, text, jsonb, text) from anon, public;
-grant execute on function public.criar_pedido_loja(uuid, text, jsonb, text) to authenticated;
+revoke execute on function public.criar_pedido_loja(uuid, jsonb, jsonb, text) from anon, public;
+grant execute on function public.criar_pedido_loja(uuid, jsonb, jsonb, text) to authenticated;
 
 -- 4. Situação dos envios acompanha o pedido (o administrador muda o pedido; o envio da cooperativa acompanha)
 -- Envios de vendedores só saem de "aguardando" quando o vendedor registra o rastreio, mas entregue e cancelado valem para todos.
