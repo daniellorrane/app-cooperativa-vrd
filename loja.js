@@ -1861,7 +1861,9 @@ window.Loja = (() => {
         return;
       }
       cupom = { codigo: data.codigo, desconto_centavos: data.desconto_centavos };
-      mostrarCupom(`Cupom ${data.codigo} aplicado: ${reais(data.desconto_centavos)} de desconto.`, false);
+      mostrarCupom(data.escopo === "vendedor"
+        ? `Cupom ${data.codigo} aplicado nos produtos de ${data.nome_loja}: ${reais(data.desconto_centavos)} de desconto.`
+        : `Cupom ${data.codigo} aplicado: ${reais(data.desconto_centavos)} de desconto.`, false);
       atualizarTotal();
     });
 
@@ -2307,6 +2309,117 @@ window.Loja = (() => {
     });
   }
 
+  // Cupons da própria loja: valem só para os produtos do vendedor. A lista fica guardada para preencher o formulário.
+  const cuponsDoVendedor = new Map();
+
+  async function blocoCuponsVendedor() {
+    const { data, error } = await sb().rpc("cupons_vendedor_loja");
+    if (error) return `<p class="erro" role="alert">${esc(error.message)}</p>`;
+    const lista = data || [];
+    cuponsDoVendedor.clear();
+    lista.forEach((c) => cuponsDoVendedor.set(c.id, c));
+    const descreve = (c) => (c.tipo === "percentual" ? `${Number(c.valor)}%` : reais(c.valor));
+    return `
+      <section class="cartao">
+        <h2>Cupons da minha loja</h2>
+        <p class="ajuda">Cupom da sua loja vale só para os seus produtos, e o desconto sai do que você recebe. Os cupons param de valer se a sua loja for suspensa.</p>
+        ${lista.length
+          ? `<div class="lista">${lista.map((c) => `
+              <button type="button" class="item evento" data-cupom="${esc(c.id)}">
+                <strong>${esc(c.codigo)}</strong>
+                <span class="ajuda">${descreve(c)} · ${Number(c.usos)} uso(s)${c.ativo ? "" : " · inativo"}${c.validade_ate ? ` · até ${new Date(c.validade_ate).toLocaleDateString("pt-BR")}` : ""}</span>
+              </button>`).join("")}</div>`
+          : '<p class="ajuda">Você ainda não criou cupons.</p>'}
+        <form id="form-cupom-vendedor" class="formulario" novalidate>
+          <h3>Novo cupom ou alteração</h3>
+          <input type="hidden" name="id" />
+          <label>Código <input type="text" name="codigo" maxlength="20" autocomplete="off" /></label>
+          <label>Tipo
+            <select name="tipo">
+              <option value="percentual">Percentual (%)</option>
+              <option value="valor">Valor fixo (R$)</option>
+            </select>
+          </label>
+          <label>Valor <input type="text" name="valor" inputmode="decimal" /></label>
+          <label>Compra mínima dos seus produtos (R$) <small>(opcional)</small> <input type="text" name="minimo" inputmode="decimal" /></label>
+          <label>Limite de usos <small>(opcional)</small> <input type="number" name="limite_usos" min="1" /></label>
+          <label>Validade <small>(opcional)</small> <input type="date" name="validade" /></label>
+          <label class="linha-check"><input type="checkbox" name="ativo" checked /> Ativo</label>
+          <button type="submit" class="btn-primario">Salvar cupom</button>
+          <button type="button" class="btn-ghost" id="novo-cupom-vendedor">Limpar formulário</button>
+          <p class="ajuda" id="cupom-vendedor-msg" role="status"></p>
+        </form>
+      </section>`;
+  }
+
+  function ligarCuponsVendedor(alvo, perfil) {
+    const form = alvo.querySelector("#form-cupom-vendedor");
+    if (!form) return;
+    const msg = alvo.querySelector("#cupom-vendedor-msg");
+    const mostrar = (texto, erro) => { msg.textContent = texto; msg.className = erro ? "erro" : "ajuda"; };
+    const limpar = () => {
+      form.reset();
+      form.querySelector("[name=id]").value = "";
+      form.querySelector("[name=ativo]").checked = true;
+      mostrar("", false);
+    };
+
+    alvo.querySelectorAll("[data-cupom]").forEach((botao) => {
+      botao.addEventListener("click", () => {
+        const c = cuponsDoVendedor.get(botao.dataset.cupom);
+        if (!c) return;
+        form.querySelector("[name=id]").value = c.id;
+        form.querySelector("[name=codigo]").value = c.codigo;
+        form.querySelector("[name=tipo]").value = c.tipo;
+        form.querySelector("[name=valor]").value = c.tipo === "percentual" ? String(Number(c.valor)) : (c.valor / 100).toFixed(2).replace(".", ",");
+        form.querySelector("[name=minimo]").value = c.minimo_centavos ? (c.minimo_centavos / 100).toFixed(2).replace(".", ",") : "";
+        form.querySelector("[name=limite_usos]").value = c.limite_usos ?? "";
+        form.querySelector("[name=validade]").value = c.validade_ate ? new Date(c.validade_ate).toISOString().slice(0, 10) : "";
+        form.querySelector("[name=ativo]").checked = !!c.ativo;
+        mostrar(`Editando o cupom ${c.codigo}.`, false);
+      });
+    });
+
+    alvo.querySelector("#novo-cupom-vendedor").addEventListener("click", limpar);
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const botao = form.querySelector("button[type=submit]");
+      const id = form.querySelector("[name=id]").value || null;
+      const codigo = form.querySelector("[name=codigo]").value.trim().toUpperCase();
+      const tipo = form.querySelector("[name=tipo]").value;
+      const valorTexto = form.querySelector("[name=valor]").value.trim();
+      const valor = tipo === "percentual" ? Math.round(Number(valorTexto.replace(",", "."))) : parseReais(valorTexto);
+      const minimoTexto = form.querySelector("[name=minimo]").value.trim();
+      const minimo = minimoTexto ? parseReais(minimoTexto) : 0;
+      const limiteTexto = form.querySelector("[name=limite_usos]").value.trim();
+      const validade = form.querySelector("[name=validade]").value;
+
+      if (!/^[A-Z0-9_-]{3,20}$/.test(codigo)) return mostrar("Código: use de 3 a 20 letras, números, - ou _.", true);
+      if (!Number.isFinite(valor) || valor < 1 || (tipo === "percentual" && valor > 100)) {
+        return mostrar(tipo === "percentual" ? "Informe um percentual de 1 a 100." : "Informe um valor em reais.", true);
+      }
+      if (!Number.isFinite(minimo) || minimo < 0) return mostrar("Informe a compra mínima em reais, ou deixe vazio.", true);
+
+      botao.disabled = true;
+      const { error } = await sb().rpc("salvar_cupom_vendedor_loja", {
+        p_id: id,
+        p_codigo: codigo,
+        p_tipo: tipo,
+        p_valor: valor,
+        p_minimo_centavos: minimo,
+        p_limite_usos: limiteTexto ? parseInt(limiteTexto, 10) : null,
+        p_limite_por_usuario: 1,
+        p_validade: validade ? new Date(`${validade}T23:59:59`).toISOString() : null,
+        p_ativo: form.querySelector("[name=ativo]").checked,
+      });
+      botao.disabled = false;
+      if (error) return mostrar(error.message, true);
+      await areaVendedor(alvo, perfil);
+      avisoNa(alvo, id ? "Cupom alterado." : "Cupom criado.");
+    });
+  }
+
   async function areaVendedor(alvo, perfil) {
     carregando(alvo);
     if (ehAdmin(perfil)) {
@@ -2341,8 +2454,9 @@ window.Loja = (() => {
           <p class="texto-puro">${esc(mensagens[meu.status] || "")}</p>
           ${meu.descricao ? `<p class="texto-puro">${esc(meu.descricao)}</p>` : ""}
         </section>
-        ${meu.status === "aprovado" ? `${blocoFreteVendedor(meu)}${await blocoEnviosVendedor()}${await blocoExtratoVendedor()}${await blocoProdutosVendedor(meu.id)}` : ""}`;
+        ${meu.status === "aprovado" ? `${blocoFreteVendedor(meu)}${await blocoCuponsVendedor()}${await blocoEnviosVendedor()}${await blocoExtratoVendedor()}${await blocoProdutosVendedor(meu.id)}` : ""}`;
       ligarFreteEEnvios(alvo, perfil);
+      ligarCuponsVendedor(alvo, perfil);
       return;
     }
 
