@@ -1113,11 +1113,23 @@ window.Loja = (() => {
     carregando(alvo);
     const [{ data: p, error }, { data: config }, { data: devolucao }] = await Promise.all([
       sb().from("pedidos")
-        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, nf_status, nf_numero, nf_chave, nf_danfe, nf_erro, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade), pedido_envios(origem_nome, servico, prazo_dias, frete_centavos, status, codigo_rastreio, enviado_em, entregue_em, criado_em)")
+        .select("id, codigo, status, metodo_entrega, subtotal_centavos, desconto_centavos, cupom_codigo, frete_centavos, total_centavos, frete_servico, prazo_dias, endereco, codigo_rastreio, expira_em, entregue_em, criado_em, pedido_itens(nome_snapshot, preco_unitario_centavos, quantidade, vendedor_id), pedido_envios(origem_nome, servico, prazo_dias, frete_centavos, status, codigo_rastreio, enviado_em, entregue_em, criado_em)")
         .eq("id", id).maybeSingle(),
       sb().from("loja_configuracoes").select("chave, valor").in("chave", ["nome_loja", "endereco_retirada", "horario_retirada"]),
       sb().from("devolucoes_loja").select("id, tipo, motivo, status, observacao_admin").eq("pedido_id", id).maybeSingle(),
     ]);
+
+    // Notas do pedido: uma por grupo (cooperativa ou vendedor). O comprador só vê as autorizadas.
+    const { data: notasBruto } = await sb().from("pedido_notas")
+      .select("id, vendedor_id, status, numero, chave, danfe, erro, valor_centavos, criado_em")
+      .eq("pedido_id", id)
+      .order("criado_em", { ascending: true });
+    const notas = notasBruto || [];
+    const idsVendedoresNota = [...new Set(notas.filter((n) => n.vendedor_id).map((n) => n.vendedor_id))];
+    const { data: vendedoresNota } = idsVendedoresNota.length
+      ? await sb().from("loja_vendedores").select("id, nome_loja").in("id", idsVendedoresNota)
+      : { data: [] };
+    const nomeVendedor = Object.fromEntries((vendedoresNota || []).map((v) => [v.id, v.nome_loja]));
 
     let aviso = "";
     try {
@@ -1167,35 +1179,66 @@ window.Loja = (() => {
            </section>`
         : "";
 
-    // Nota fiscal: o cooperado vê o número e o DANFE; o administrador também emite, consulta e cancela.
+    // Nota fiscal: uma nota por grupo do pedido (cooperativa e cada vendedor).
+    // O comprador vê as notas autorizadas. O administrador emite, consulta e cancela cada uma.
     const NOTA_STATUS = { processando: "Em processamento", autorizada: "Autorizada", erro: "Com erro", cancelada: "Cancelada" };
     const statusComNota = ["pago", "em_separacao", "pronto_retirada", "retirado", "enviado", "entregue"];
-    const danfe = p.nf_danfe && /^https:\/\//.test(p.nf_danfe) ? p.nf_danfe : null;
     const admin = ehAdmin(perfil);
-    const blocoNotaCooperado = !admin && p.nf_status === "autorizada"
-      ? `<section class="cartao">
-           <h2>Nota fiscal</h2>
-           <p>Nota nº <strong>${esc(p.nf_numero || "")}</strong></p>
-           ${danfe ? `<p><a class="btn-ghost" href="${esc(danfe)}" target="_blank" rel="noopener">Ver DANFE (PDF)</a></p>` : ""}
-         </section>`
-      : "";
+    const nomeGrupo = (vendedorId) => (vendedorId ? (nomeVendedor[vendedorId] || "Vendedor") : (cfg.nome_loja || "Cooperativa"));
+    const danfeSeguro = (url) => (url && /^https:\/\//.test(url) ? url : null);
+
+    const botoesNotaAdmin = (grupo, nota) => {
+      const vendedor = grupo ? ` data-vendedor="${esc(grupo)}"` : "";
+      const situacao = nota?.status;
+      const botoes = [];
+      if (!nota || situacao === "erro" || situacao === "processando" || situacao === "cancelada") {
+        botoes.push(`<button type="button" class="btn-primario" data-nota="emitir"${vendedor} data-situacao="${esc(situacao || "")}">${situacao === "processando" ? "Emitir de novo" : "Emitir nota"}</button>`);
+      }
+      if (situacao === "processando" || situacao === "erro") {
+        botoes.push(`<button type="button" class="btn-ghost" data-nota="consultar"${vendedor}>Consultar situação</button>`);
+      }
+      if (situacao === "autorizada") {
+        botoes.push(`<button type="button" class="btn-ghost" data-nota="cancelar"${vendedor}>Cancelar nota</button>`);
+      }
+      return botoes.length ? `<div class="acoes-evento">${botoes.join("")}</div>` : "";
+    };
+
+    // Grupos do pedido: a cooperativa (sem vendedor) e cada vendedor com item no pedido
+    const gruposPedido = [...new Set(itens.map((i) => i.vendedor_id || null))];
     const blocoNotaAdmin = admin && statusComNota.includes(p.status)
       ? `<section class="cartao" id="bloco-nota">
-           <h2>Nota fiscal</h2>
-           <p>Situação: <strong>${esc(NOTA_STATUS[p.nf_status] || "Não emitida")}</strong></p>
-           ${p.nf_numero ? `<p>Número: ${esc(p.nf_numero)}</p>` : ""}
-           ${p.nf_chave ? `<p class="ajuda texto-puro">Chave: ${esc(p.nf_chave)}</p>` : ""}
-           ${p.nf_erro ? `<p class="erro">${esc(p.nf_erro)}</p>` : ""}
-           ${danfe ? `<p><a class="btn-ghost" href="${esc(danfe)}" target="_blank" rel="noopener">Ver DANFE (PDF)</a></p>` : ""}
-           <div class="acoes-evento">
-             ${p.nf_status !== "autorizada"
-               ? `<button type="button" class="btn-primario" data-nota="emitir">${p.nf_status === "processando" ? "Emitir de novo" : "Emitir nota"}</button>` : ""}
-             ${p.nf_status === "processando" || p.nf_status === "erro"
-               ? '<button type="button" class="btn-ghost" data-nota="consultar">Consultar situação</button>' : ""}
-             ${p.nf_status === "autorizada"
-               ? '<button type="button" class="btn-ghost" data-nota="cancelar">Cancelar nota</button>' : ""}
+           <h2>Notas fiscais</h2>
+           <p class="ajuda">Uma nota por parte do pedido. Cada vendedor emite pela conta dele.</p>
+           <div class="lista">
+             ${gruposPedido.map((grupo) => {
+               const nota = notas.find((n) => (n.vendedor_id || null) === grupo);
+               return `
+               <article class="item">
+                 <strong>${esc(nomeGrupo(grupo))}</strong>
+                 <span class="ajuda">${nota ? esc(NOTA_STATUS[nota.status] || nota.status) : "Não emitida"}${nota?.numero ? ` · nº ${esc(nota.numero)}` : ""}</span>
+                 ${nota?.chave ? `<span class="ajuda texto-puro">Chave: ${esc(nota.chave)}</span>` : ""}
+                 ${nota?.erro ? `<span class="erro">${esc(nota.erro)}</span>` : ""}
+                 ${danfeSeguro(nota?.danfe) ? `<a class="btn-ghost" href="${esc(danfeSeguro(nota.danfe))}" target="_blank" rel="noopener">Ver DANFE (PDF)</a>` : ""}
+                 ${botoesNotaAdmin(grupo, nota)}
+               </article>`;
+             }).join("")}
            </div>
            <p class="ajuda">A nota só pode ser cancelada dentro do prazo permitido pela Receita do estado, que pode variar. Confirme com o contador.</p>
+         </section>`
+      : "";
+
+    const notasAutorizadas = notas.filter((n) => n.status === "autorizada");
+    const blocoNotaCooperado = !admin && notasAutorizadas.length
+      ? `<section class="cartao">
+           <h2>Nota fiscal</h2>
+           <div class="lista">
+             ${notasAutorizadas.map((n) => `
+               <article class="item">
+                 <strong>${esc(nomeGrupo(n.vendedor_id))}${n.numero ? ` · nº ${esc(n.numero)}` : ""}</strong>
+                 ${n.chave ? `<span class="ajuda texto-puro">Chave: ${esc(n.chave)}</span>` : ""}
+                 ${danfeSeguro(n.danfe) ? `<a class="btn-ghost" href="${esc(danfeSeguro(n.danfe))}" target="_blank" rel="noopener">Ver DANFE (PDF)</a>` : ""}
+               </article>`).join("")}
+           </div>
          </section>`
       : "";
 
@@ -1304,20 +1347,27 @@ window.Loja = (() => {
     alvo.querySelectorAll("[data-nota]").forEach((botao) => {
       botao.addEventListener("click", async () => {
         const acao = botao.dataset.nota;
+        const vendedorId = botao.dataset.vendedor || null;
+        const situacao = botao.dataset.situacao || "";
         let justificativa;
-        if (acao === "emitir" && p.nf_status === "processando"
+        if (acao === "emitir" && situacao === "processando"
           && !confirm("Esta nota ainda está em processamento. Consulte a situação antes. Emitir de novo só se a consulta mostrar que ela não foi criada. Emitir mesmo assim?")) {
           return;
         }
         if (acao === "cancelar") {
           justificativa = (prompt("Motivo do cancelamento da nota (mínimo de 15 letras):") || "").trim();
           if (justificativa.length < 15) return erroNa(alvo, "A justificativa do cancelamento precisa ter pelo menos 15 letras.");
-          if (!confirm("Cancelar a nota fiscal deste pedido na Receita?")) return;
+          if (!confirm("Cancelar esta nota fiscal na Receita?")) return;
         }
         const botoes = alvo.querySelectorAll("[data-nota]");
         botoes.forEach((b) => { b.disabled = true; });
         const { data, error: falha } = await sb().functions.invoke("loja-nota-fiscal", {
-          body: { pedido_id: p.id, acao, ...(justificativa ? { justificativa } : {}) },
+          body: {
+            pedido_id: p.id,
+            acao,
+            ...(vendedorId ? { vendedor_id: vendedorId } : {}),
+            ...(justificativa ? { justificativa } : {}),
+          },
         });
         botoes.forEach((b) => { b.disabled = false; });
         if (falha) return erroNa(alvo, await mensagemFuncao(falha));
@@ -2420,6 +2470,107 @@ window.Loja = (() => {
     });
   }
 
+  // ---------- Nota fiscal do vendedor ----------
+  // Cada vendedor emite as notas das próprias vendas pela conta dele no Focus NFe.
+  // O token e o certificado A1 ficam na conta do vendedor no Focus NFe. Aqui só guardamos o token, protegido.
+  const CAMPOS_FISCAIS_VENDEDOR = ["razao_social", "ie", "regime", "logradouro", "numero", "bairro", "municipio", "uf", "cep", "natureza_operacao", "cfop", "csosn", "cst_icms", "icms_aliquota", "origem", "cst_pis", "cst_cofins", "ambiente"];
+
+  async function blocoNotaVendedor() {
+    const { data: dados, error } = await sb().rpc("meus_dados_fiscais_vendedor_loja");
+    if (error) return `<p class="erro" role="alert">${esc(error.message)}</p>`;
+    const v = dados || {};
+    const marcado = (ok) => (ok ? "selected" : "");
+    const texto = (campo, valor) => esc(v[campo] ?? valor ?? "");
+    return `
+      <section class="cartao" id="secao-nota-vendedor">
+        <h2>Nota fiscal da minha loja</h2>
+        <p class="ajuda">Cada venda sua gera uma nota fiscal em seu nome. O CNPJ é o que você informou no cadastro da loja, e MEI também tem CNPJ. Os campos tributários precisam ser confirmados pelo seu contador antes da primeira nota real. Comece pelo ambiente de teste (homologação).</p>
+        <form id="form-nota-vendedor" class="formulario" novalidate>
+          <label class="opcao-entrega">
+            <input type="checkbox" name="ativo" ${v.fiscal_ativo ? "checked" : ""} />
+            <span>Emitir nota fiscal das minhas vendas</span>
+          </label>
+          <label>Ambiente
+            <select name="ambiente">
+              <option value="homologacao" ${marcado((v.fiscal_ambiente || "homologacao") === "homologacao")}>Teste (homologação)</option>
+              <option value="producao" ${marcado(v.fiscal_ambiente === "producao")}>Produção</option>
+            </select>
+          </label>
+          <label>Razão social <input type="text" name="razao_social" maxlength="120" value="${texto("fiscal_razao_social")}" /></label>
+          <label>Inscrição estadual <small>(se tiver)</small> <input type="text" name="ie" maxlength="20" value="${texto("fiscal_ie")}" /></label>
+          <label>Regime tributário
+            <select name="regime">
+              <option value="simples" ${marcado((v.fiscal_regime || "simples") === "simples")}>Simples Nacional ou MEI</option>
+              <option value="normal" ${marcado(v.fiscal_regime === "normal")}>Regime normal (lucro presumido ou real)</option>
+            </select>
+          </label>
+          <div class="linha-campos">
+            <label>Logradouro <input type="text" name="logradouro" maxlength="120" value="${texto("fiscal_logradouro")}" /></label>
+            <label>Número <input type="text" name="numero" maxlength="10" value="${texto("fiscal_numero")}" /></label>
+          </div>
+          <label>Bairro <input type="text" name="bairro" maxlength="60" value="${texto("fiscal_bairro")}" /></label>
+          <div class="linha-campos">
+            <label>Município <input type="text" name="municipio" maxlength="60" value="${texto("fiscal_municipio")}" /></label>
+            <label>UF <input type="text" name="uf" maxlength="2" value="${texto("fiscal_uf")}" /></label>
+          </div>
+          <label>CEP <input type="text" name="cep" inputmode="numeric" maxlength="9" value="${texto("fiscal_cep")}" /></label>
+          <label>Natureza da operação <input type="text" name="natureza_operacao" maxlength="60" value="${texto("fiscal_natureza_operacao", "Venda de mercadoria")}" /></label>
+          <label>CFOP <small>(venda dentro do estado: 5102)</small> <input type="text" name="cfop" maxlength="4" value="${texto("fiscal_cfop")}" /></label>
+          <label>CSOSN <small>(só Simples Nacional, ex.: 102)</small> <input type="text" name="csosn" maxlength="3" value="${texto("fiscal_csosn")}" /></label>
+          <label>CST do ICMS <small>(só regime normal, ex.: 00)</small> <input type="text" name="cst_icms" maxlength="3" value="${texto("fiscal_cst_icms")}" /></label>
+          <label>Alíquota do ICMS (%) <small>(só regime normal)</small> <input type="text" name="icms_aliquota" inputmode="decimal" maxlength="6" value="${texto("fiscal_icms_aliquota")}" /></label>
+          <label>Origem da mercadoria <small>(0 = nacional)</small> <input type="text" name="origem" maxlength="1" value="${texto("fiscal_origem", "0")}" /></label>
+          <label>CST do PIS <input type="text" name="cst_pis" maxlength="2" value="${texto("fiscal_cst_pis", "07")}" /></label>
+          <label>CST da COFINS <input type="text" name="cst_cofins" maxlength="2" value="${texto("fiscal_cst_cofins", "07")}" /></label>
+          <button type="submit" class="btn-primario">Salvar dados fiscais</button>
+        </form>
+        <form id="form-token-nf-vendedor" class="formulario" novalidate>
+          <h3>Conta de emissão no Focus NFe</h3>
+          <p class="ajuda">Cole o token da sua conta no Focus NFe. O certificado digital A1 fica na sua conta no Focus NFe, não aqui. ${v.fiscal_token_configurado ? "Token já configurado. Digite outro só para trocar." : "Token ainda não configurado."} Por segurança, o token não aparece de novo na tela.</p>
+          <label>Token do Focus NFe
+            <input type="password" name="token" autocomplete="new-password" spellcheck="false" maxlength="300" placeholder="${v.fiscal_token_configurado ? "Configurado" : "Cole o token"}" />
+          </label>
+          <button type="submit" class="btn-ghost">Salvar token</button>
+        </form>
+        <p class="ajuda">A emissão só liga quando o CNPJ, a conta do Focus NFe e os campos obrigatórios estiverem preenchidos.</p>
+      </section>`;
+  }
+
+  function ligarNotaVendedor(alvo, perfil) {
+    const form = alvo.querySelector("#form-nota-vendedor");
+    form?.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const dados = { ativo: f.get("ativo") === "on" };
+      for (const campo of CAMPOS_FISCAIS_VENDEDOR) dados[campo] = String(f.get(campo) || "").trim();
+      const botao = form.querySelector("button[type=submit]");
+      botao.disabled = true;
+      const { error: falha } = await sb().rpc("salvar_fiscal_vendedor_loja", { p_dados: dados });
+      if (falha) {
+        botao.disabled = false;
+        return erroNa(alvo, falha.message);
+      }
+      await areaVendedor(alvo, perfil);
+      avisoNa(alvo, "Dados fiscais salvos.");
+    });
+
+    const formToken = alvo.querySelector("#form-token-nf-vendedor");
+    formToken?.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const token = String(formToken.querySelector("[name=token]").value || "").trim();
+      if (!token) return erroNa(alvo, "Cole o token da sua conta no Focus NFe.");
+      const botao = formToken.querySelector("button[type=submit]");
+      botao.disabled = true;
+      const { error: falha } = await sb().rpc("salvar_token_nf_vendedor_loja", { p_token: token });
+      if (falha) {
+        botao.disabled = false;
+        return erroNa(alvo, falha.message);
+      }
+      await areaVendedor(alvo, perfil);
+      avisoNa(alvo, "Token salvo.");
+    });
+  }
+
   async function areaVendedor(alvo, perfil) {
     carregando(alvo);
     if (ehAdmin(perfil)) {
@@ -2454,9 +2605,10 @@ window.Loja = (() => {
           <p class="texto-puro">${esc(mensagens[meu.status] || "")}</p>
           ${meu.descricao ? `<p class="texto-puro">${esc(meu.descricao)}</p>` : ""}
         </section>
-        ${meu.status === "aprovado" ? `${blocoFreteVendedor(meu)}${await blocoCuponsVendedor()}${await blocoEnviosVendedor()}${await blocoExtratoVendedor()}${await blocoProdutosVendedor(meu.id)}` : ""}`;
+        ${meu.status === "aprovado" ? `${ERRO_GERAL}${AVISO_GERAL}${blocoFreteVendedor(meu)}${await blocoCuponsVendedor()}${await blocoEnviosVendedor()}${await blocoNotaVendedor()}${await blocoExtratoVendedor()}${await blocoProdutosVendedor(meu.id)}` : ""}`;
       ligarFreteEEnvios(alvo, perfil);
       ligarCuponsVendedor(alvo, perfil);
+      if (meu.status === "aprovado") ligarNotaVendedor(alvo, perfil);
       return;
     }
 
@@ -2467,7 +2619,7 @@ window.Loja = (() => {
       ${ERRO_GERAL}
       <form id="form-vendedor" class="formulario cartao" novalidate>
         <label>Nome da loja <input type="text" name="nome" maxlength="80" required /></label>
-        <label>CPF ou CNPJ <small>(só números)</small> <input type="text" name="documento" inputmode="numeric" maxlength="18" required /></label>
+        <label>CNPJ <small>(14 números; MEI também tem CNPJ)</small> <input type="text" name="documento" inputmode="numeric" maxlength="18" autocomplete="off" required /></label>
         <label>Descrição da loja <small>(opcional)</small> <textarea name="descricao" rows="3" maxlength="500"></textarea></label>
         <label>CEP de onde saem os produtos <small>(opcional, usado no frete)</small> <input type="text" name="cep" inputmode="numeric" maxlength="9" /></label>
         <button type="submit" class="btn-primario">Enviar cadastro</button>
@@ -2481,7 +2633,7 @@ window.Loja = (() => {
       botao.disabled = true;
       const { error: falha } = await sb().rpc("cadastrar_vendedor_loja", {
         p_nome: String(f.get("nome") || "").trim(),
-        p_documento: String(f.get("documento") || ""),
+        p_documento: String(f.get("documento") || "").replace(/\D/g, ""),
         p_descricao: String(f.get("descricao") || "").trim() || null,
         p_cep: String(f.get("cep") || "") || null,
       });
