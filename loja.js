@@ -1592,15 +1592,99 @@ window.Loja = (() => {
 
   async function configuracoesPagamento(alvo) {
     carregando(alvo);
-    const [{ data: linhas }, { data: situacao }, { data: provedores }] = await Promise.all([
+    const [{ data: linhas }, { data: situacao }, { data: provedores }, { data: parametros }] = await Promise.all([
       sb().from("loja_configuracoes").select("chave, valor"),
       sb().rpc("status_loja_pagamento"),
       sb().from("loja_provedores_entrega").select("codigo, nome, tipo, ativo, ambiente, configuracao").order("nome"),
+      sb().from("loja_parametros").select("chave, grupo, rotulo, ajuda, tipo, opcoes, minimo, maximo, padrao, ordem").order("grupo").order("ordem"),
     ]);
     const v = Object.fromEntries((linhas || []).map((l) => [l.chave, l.valor]));
     const situacaoTexto = (ok) => (ok ? "configurado" : "não configurado");
     const centavosParaCampo = (c) => (Number(c || 0) / 100).toFixed(2).replace(".", ",");
     const selecionado = (ok, valor) => (ok === valor ? "selected" : "");
+
+    // Valor gravado, ou o padrão do catálogo quando ainda não há valor
+    const valorAtual = (p) => {
+      const atual = v[p.chave];
+      if (atual !== undefined && atual !== null && atual !== "") return atual;
+      return p.padrao ?? "";
+    };
+
+    // Um campo por parâmetro, do tipo certo
+    const campoParametro = (p) => {
+      const atual = valorAtual(p);
+      const rotulo = `${esc(p.rotulo)}${p.ajuda ? ` <small>${esc(p.ajuda)}</small>` : ""}`;
+      let controle;
+      if (p.tipo === "escolha") {
+        const opcoes = Array.isArray(p.opcoes) ? p.opcoes : [];
+        controle = `<select name="${esc(p.chave)}">${opcoes.map((o) => `<option value="${esc(o.valor)}" ${selecionado(atual, o.valor)}>${esc(o.rotulo)}</option>`).join("")}</select>`;
+      } else if (p.tipo === "texto_longo") {
+        controle = `<textarea name="${esc(p.chave)}" rows="3" maxlength="${Number(p.maximo || 500)}">${esc(atual)}</textarea>`;
+      } else if (p.tipo === "url") {
+        controle = `<input type="url" name="${esc(p.chave)}" maxlength="${Number(p.maximo || 200)}" placeholder="https://..." value="${esc(atual)}" />`;
+      } else if (p.tipo === "inteiro") {
+        const limites = `${p.minimo != null ? ` min="${Number(p.minimo)}"` : ""}${p.maximo != null ? ` max="${Number(p.maximo)}"` : ""}`;
+        controle = `<input type="number" name="${esc(p.chave)}" step="1"${limites} value="${esc(atual)}" />`;
+      } else if (p.tipo === "centavos") {
+        controle = `<input type="text" name="${esc(p.chave)}" inputmode="decimal" placeholder="Ex.: 10,00" value="${atual === "" ? "" : esc(centavosParaCampo(atual))}" />`;
+      } else if (p.tipo === "percentual") {
+        controle = `<input type="text" name="${esc(p.chave)}" inputmode="decimal" maxlength="6" value="${esc(atual)}" />`;
+      } else {
+        controle = `<input type="text" name="${esc(p.chave)}" maxlength="${Number(p.maximo || 200)}" value="${esc(atual)}" />`;
+      }
+      return `<label>${rotulo}\n          ${controle}\n        </label>`;
+    };
+
+    // Campos de chaves secretas e endereços de webhook, ligados ao parâmetro logo antes deles
+    const webhookMercadoPago = `<p class="ajuda">Endereço de notificação para cadastrar no Mercado Pago:<br />
+          <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-pagamento-webhook</code></p>`;
+    const extrasPorChave = {
+      mp_public_key: `
+        <label>Token de acesso do Mercado Pago <small>(${situacaoTexto(situacao?.mp_access_token)})</small>
+          <input type="text" name="mp_access_token" autocomplete="off" spellcheck="false" maxlength="300"
+            placeholder="${situacao?.mp_access_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token de acesso"}" />
+        </label>
+        <label>Chave secreta do webhook <small>(${situacaoTexto(situacao?.mp_webhook_secret)})</small>
+          <input type="text" name="mp_webhook_secret" autocomplete="off" spellcheck="false" maxlength="300"
+            placeholder="${situacao?.mp_webhook_secret ? "Configurada. Digite uma nova chave só para trocar" : "Cole a chave secreta do webhook"}" />
+        </label>
+        ${webhookMercadoPago}`,
+      melhor_envio_sandbox: `
+        <label>Token de acesso do Melhor Envio <small>(${situacaoTexto(situacao?.melhor_envio_token)})</small>
+          <input type="text" name="melhor_envio_token" autocomplete="off" spellcheck="false" maxlength="2000"
+            placeholder="${situacao?.melhor_envio_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Melhor Envio"}" />
+        </label>`,
+      rastreio_tentativas_maximo: `
+        <label>Token do provedor de rastreio <small>(preencha só para trocar)</small>
+          <input type="text" name="rastreio_provedor_token" autocomplete="off" spellcheck="false" maxlength="300" />
+        </label>
+        <label>Chave secreta do webhook da Melhor Envio <small>(preencha só para trocar)</small>
+          <input type="text" name="melhor_envio_webhook_secret" autocomplete="off" spellcheck="false" maxlength="300" />
+        </label>
+        <p class="ajuda">Endereço para cadastrar no aplicativo da Melhor Envio:<br />
+          <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-rastreio-webhook</code></p>`,
+      fiscal_ambiente: `
+        <label>Token do Focus NFe <small>(${situacao?.focus_nfe_token ? "configurado" : "não configurado"})</small>
+          <input type="text" name="focus_nfe_token" autocomplete="off" spellcheck="false" maxlength="300"
+            placeholder="${situacao?.focus_nfe_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Focus NFe"}" />
+        </label>`,
+    };
+
+    const GRUPOS = [
+      ["loja", "Dados da loja", ""],
+      ["pagamento", "Pagamento", ""],
+      ["entrega", "Entrega", ""],
+      ["rastreio", "Rastreio de entregas", "A Melhor Envio avisa sozinha as etiquetas compradas por ela. Para os demais envios, escolha um provedor de rastreio."],
+      ["devolucao", "Devoluções", "Os prazos são contados a partir da entrega. O que fazer com pedidos devolvidos ao remetente também fica aqui."],
+      ["vendedores", "Marketplace", ""],
+      ["fiscal", "Nota fiscal (Focus NFe)", "Os campos tributários precisam ser confirmados pelo contador antes da primeira nota real. Comece sempre pelo ambiente de teste (homologação)."],
+    ];
+    const formularioConfig = GRUPOS.map(([grupo, titulo, ajuda]) => {
+      const itens = (parametros || []).filter((p) => p.grupo === grupo);
+      if (!itens.length) return "";
+      const corpo = itens.map((p) => campoParametro(p) + (extrasPorChave[p.chave] || "")).join("");
+      return `<h2>${esc(titulo)}</h2>${ajuda ? `<p class="ajuda">${esc(ajuda)}</p>` : ""}${corpo}`;
+    }).join("");
 
     alvo.innerHTML = `
       <p class="rodape-form"><a href="#loja/gerenciar">← Voltar para gerenciar loja</a></p>
@@ -1609,139 +1693,7 @@ window.Loja = (() => {
       ${ERRO_GERAL}
       ${AVISO_GERAL}
       <form id="form-config" class="formulario" novalidate>
-        <h2>Dados da loja</h2>
-        <label>Nome da loja
-          <input type="text" name="nome_loja" maxlength="120" value="${esc(v.nome_loja || "")}" />
-        </label>
-        <label>Endereço para retirada
-          <textarea name="endereco_retirada" rows="3" maxlength="500">${esc(v.endereco_retirada || "")}</textarea>
-        </label>
-        <label>Horário de retirada
-          <input type="text" name="horario_retirada" maxlength="200" placeholder="Ex.: segunda a sexta, 8h às 17h" value="${esc(v.horario_retirada || "")}" />
-        </label>
-        <label>Minutos para pagar um pedido
-          <input type="number" name="minutos_expiracao_pedido" min="5" max="1440" step="1" value="${esc(v.minutos_expiracao_pedido || "30")}" />
-        </label>
-        <label>Endereço do aplicativo <small>(começa com https://)</small>
-          <input type="url" name="url_publica_app" maxlength="200" placeholder="https://seu-app.vercel.app" value="${esc(v.url_publica_app || "")}" />
-        </label>
-
-        <h2>Entrega</h2>
-        <label>CEP de origem <small>(de onde os pacotes saem)</small>
-          <input type="text" name="cep_origem" inputmode="numeric" maxlength="9" placeholder="00000-000" value="${esc(v.cep_origem || "")}" />
-        </label>
-        <label>Entrega local
-          <select name="entrega_local_ativa">
-            <option value="nao" ${selecionado(v.entrega_local_ativa === "sim" ? "sim" : "nao", "nao")}>Desligada</option>
-            <option value="sim" ${selecionado(v.entrega_local_ativa === "sim" ? "sim" : "nao", "sim")}>Ligada</option>
-          </select>
-        </label>
-        <label>CEPs da entrega local <small>(5 primeiros números, separados por vírgula)</small>
-          <input type="text" name="entrega_local_ceps" maxlength="200" placeholder="Ex.: 35160, 35161" value="${esc(v.entrega_local_ceps || "")}" />
-        </label>
-        <label>Taxa da entrega local (R$)
-          <input type="text" name="taxa_entrega_local" inputmode="decimal" placeholder="Ex.: 10,00" value="${centavosParaCampo(v.taxa_entrega_local_centavos)}" />
-        </label>
-
-        <h2>Mercado Pago</h2>
-        <label>Chave pública
-          <input type="text" name="mp_public_key" maxlength="200" value="${esc(v.mp_public_key || "")}" />
-        </label>
-        <label>Token de acesso <small>(${situacaoTexto(situacao?.mp_access_token)})</small>
-          <input type="text" name="mp_access_token" autocomplete="off" spellcheck="false" maxlength="300"
-            placeholder="${situacao?.mp_access_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token de acesso"}" />
-        </label>
-        <label>Chave secreta do webhook <small>(${situacaoTexto(situacao?.mp_webhook_secret)})</small>
-          <input type="text" name="mp_webhook_secret" autocomplete="off" spellcheck="false" maxlength="300"
-            placeholder="${situacao?.mp_webhook_secret ? "Configurada. Digite uma nova chave só para trocar" : "Cole a chave secreta do webhook"}" />
-        </label>
-        <p class="ajuda">Endereço de notificação para cadastrar no Mercado Pago:<br />
-          <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-pagamento-webhook</code></p>
-
-        <h2>Rastreio de entregas</h2>
-        <p class="ajuda">A Melhor Envio avisa sozinha as etiquetas compradas por ela. Para os demais envios, escolha um provedor de rastreio.</p>
-        <label>Provedor de rastreio
-          <select name="rastreio_provedor">
-            ${PROVEDORES_RASTREIO.map((p) => `<option value="${esc(p.codigo)}" ${selecionado(v.rastreio_provedor || "nenhum", p.codigo)}>${esc(p.nome)}</option>`).join("")}
-          </select>
-        </label>
-        <label>Token do provedor de rastreio <small>(preencha só para trocar)</small>
-          <input type="text" name="rastreio_provedor_token" autocomplete="off" spellcheck="false" maxlength="300" />
-        </label>
-        <label>Pedido devolvido ao remetente
-          <select name="devolvido_acao">
-            <option value="aguardando_admin" ${selecionado(v.devolvido_acao === "reembolso" ? "reembolso" : "aguardando_admin", "aguardando_admin")}>Aguardar decisão do administrador</option>
-            <option value="reembolso" ${selecionado(v.devolvido_acao === "reembolso" ? "reembolso" : "aguardando_admin", "reembolso")}>Marcar para reembolso</option>
-          </select>
-        </label>
-        <label>Chave secreta do webhook da Melhor Envio <small>(preencha só para trocar)</small>
-          <input type="text" name="melhor_envio_webhook_secret" autocomplete="off" spellcheck="false" maxlength="300" />
-        </label>
-        <p class="ajuda">Endereço para cadastrar no aplicativo da Melhor Envio:<br />
-          <code>${esc(window.APP_CONFIG.SUPABASE_URL)}/functions/v1/loja-rastreio-webhook</code></p>
-
-        <h2>Transportadoras (Melhor Envio)</h2>
-        <label>Ambiente
-          <select name="melhor_envio_sandbox">
-            <option value="sim" ${selecionado(v.melhor_envio_sandbox === "sim" ? "sim" : "nao", "sim")}>Teste (sandbox)</option>
-            <option value="nao" ${selecionado(v.melhor_envio_sandbox === "sim" ? "sim" : "nao", "nao")}>Produção</option>
-          </select>
-        </label>
-        <label>Token de acesso <small>(${situacaoTexto(situacao?.melhor_envio_token)})</small>
-          <input type="text" name="melhor_envio_token" autocomplete="off" spellcheck="false" maxlength="2000"
-            placeholder="${situacao?.melhor_envio_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Melhor Envio"}" />
-        </label>
-        <h2>Marketplace</h2>
-        <label>Comissão padrão da loja (%) <small>(vale para vendedores sem comissão própria)</small>
-          <input type="text" name="comissao_padrao_percentual" inputmode="decimal" maxlength="6" value="${esc(v.comissao_padrao_percentual || "0")}" />
-        </label>
-
-        <h2>Nota fiscal (Focus NFe)</h2>
-        <p class="ajuda">Preencha com os dados da cooperativa. Os campos tributários precisam ser confirmados pelo contador antes da primeira nota real. Comece sempre pelo ambiente de teste (homologação).</p>
-        <label>Emissão de nota fiscal
-          <select name="fiscal_ativo">
-            <option value="nao" ${selecionado(v.fiscal_ativo === "sim" ? "sim" : "nao", "nao")}>Desligada</option>
-            <option value="sim" ${selecionado(v.fiscal_ativo === "sim" ? "sim" : "nao", "sim")}>Ligada</option>
-          </select>
-        </label>
-        <label>Ambiente
-          <select name="fiscal_ambiente">
-            <option value="homologacao" ${selecionado(v.fiscal_ambiente === "producao" ? "producao" : "homologacao", "homologacao")}>Teste (homologação)</option>
-            <option value="producao" ${selecionado(v.fiscal_ambiente === "producao" ? "producao" : "homologacao", "producao")}>Produção</option>
-          </select>
-        </label>
-        <label>Token do Focus NFe <small>(${situacao?.focus_nfe_token ? "configurado" : "não configurado"})</small>
-          <input type="text" name="focus_nfe_token" autocomplete="off" spellcheck="false" maxlength="300"
-            placeholder="${situacao?.focus_nfe_token ? "Configurado. Digite um novo token só para trocar" : "Cole o token do Focus NFe"}" />
-        </label>
-        <label>CNPJ da cooperativa <input type="text" name="fiscal_cnpj" inputmode="numeric" maxlength="18" value="${esc(v.fiscal_cnpj || "")}" /></label>
-        <label>Razão social <input type="text" name="fiscal_razao_social" maxlength="120" value="${esc(v.fiscal_razao_social || "")}" /></label>
-        <label>Inscrição estadual <input type="text" name="fiscal_ie" maxlength="20" value="${esc(v.fiscal_ie || "")}" /></label>
-        <label>Regime tributário
-          <select name="fiscal_regime">
-            <option value="simples" ${selecionado(v.fiscal_regime === "normal" ? "normal" : "simples", "simples")}>Simples Nacional</option>
-            <option value="normal" ${selecionado(v.fiscal_regime === "normal" ? "normal" : "simples", "normal")}>Regime normal (lucro presumido ou real)</option>
-          </select>
-        </label>
-        <div class="linha-campos">
-          <label>Logradouro <input type="text" name="fiscal_logradouro" maxlength="120" value="${esc(v.fiscal_logradouro || "")}" /></label>
-          <label>Número <input type="text" name="fiscal_numero" maxlength="10" value="${esc(v.fiscal_numero || "")}" /></label>
-        </div>
-        <label>Bairro <input type="text" name="fiscal_bairro" maxlength="60" value="${esc(v.fiscal_bairro || "")}" /></label>
-        <div class="linha-campos">
-          <label>Município <input type="text" name="fiscal_municipio" maxlength="60" value="${esc(v.fiscal_municipio || "")}" /></label>
-          <label>UF <input type="text" name="fiscal_uf" maxlength="2" value="${esc(v.fiscal_uf || "")}" /></label>
-        </div>
-        <label>CEP <input type="text" name="fiscal_cep" inputmode="numeric" maxlength="9" value="${esc(v.fiscal_cep || "")}" /></label>
-        <label>Natureza da operação <input type="text" name="fiscal_natureza_operacao" maxlength="60" value="${esc(v.fiscal_natureza_operacao || "Venda de mercadoria")}" /></label>
-        <label>CFOP <small>(venda dentro do estado: 5102)</small> <input type="text" name="fiscal_cfop" maxlength="4" value="${esc(v.fiscal_cfop || "")}" /></label>
-        <label>CSOSN <small>(só Simples Nacional, ex.: 102)</small> <input type="text" name="fiscal_csosn" maxlength="3" value="${esc(v.fiscal_csosn || "")}" /></label>
-        <label>CST do ICMS <small>(só regime normal, ex.: 00)</small> <input type="text" name="fiscal_cst_icms" maxlength="3" value="${esc(v.fiscal_cst_icms || "")}" /></label>
-        <label>Alíquota do ICMS (%) <small>(só regime normal)</small> <input type="text" name="fiscal_icms_aliquota" inputmode="decimal" maxlength="6" value="${esc(v.fiscal_icms_aliquota || "")}" /></label>
-        <label>Origem da mercadoria <small>(0 = nacional)</small> <input type="text" name="fiscal_origem" maxlength="1" value="${esc(v.fiscal_origem || "0")}" /></label>
-        <label>CST do PIS <input type="text" name="fiscal_cst_pis" maxlength="2" value="${esc(v.fiscal_cst_pis || "07")}" /></label>
-        <label>CST da COFINS <input type="text" name="fiscal_cst_cofins" maxlength="2" value="${esc(v.fiscal_cst_cofins || "07")}" /></label>
-
+        ${formularioConfig}
         <button type="submit" class="btn-primario">Salvar configurações</button>
       </form>
 
@@ -1777,50 +1729,28 @@ window.Loja = (() => {
       ev.preventDefault();
       const form = ev.currentTarget;
       const f = new FormData(form);
-      const minutos = Number(f.get("minutos_expiracao_pedido"));
-      const url = String(f.get("url_publica_app") || "").trim();
-      const cepOrigem = String(f.get("cep_origem") || "").replace(/\D/g, "");
-      const taxa = String(f.get("taxa_entrega_local") || "").trim();
-      const taxaCentavos = taxa ? parseReais(taxa) : 0;
+      const agora = new Date().toISOString();
+      const linhasSalvar = [];
 
-      if (!Number.isInteger(minutos) || minutos < 5 || minutos > 1440) {
-        return erroNa(alvo, "O prazo para pagar precisa estar entre 5 e 1440 minutos.");
-      }
-      if (url) {
-        try {
-          if (new URL(url).protocol !== "https:") throw new Error();
-        } catch (_) {
-          return erroNa(alvo, "O endereço do aplicativo precisa começar com https://");
+      for (const p of parametros || []) {
+        let valor = String(f.get(p.chave) ?? "").trim();
+        if (p.chave === "cep_origem") valor = valor.replace(/\D/g, "");
+        if (p.tipo === "percentual" || p.tipo === "inteiro") valor = valor.replace(",", ".");
+        if (p.tipo === "centavos" && valor) {
+          const centavos = parseReais(valor);
+          if (!Number.isFinite(centavos) || centavos < 0) {
+            return erroNa(alvo, `${p.rotulo}: informe o valor no formato 10,00.`);
+          }
+          valor = String(centavos);
         }
-      }
-      if (cepOrigem && cepOrigem.length !== 8) {
-        return erroNa(alvo, "O CEP de origem precisa ter 8 números.");
-      }
-      if (!Number.isFinite(taxaCentavos) || taxaCentavos < 0) {
-        return erroNa(alvo, "Informe a taxa da entrega local no formato 10,00.");
-      }
-      const comissaoTexto = String(f.get("comissao_padrao_percentual") || "0").trim().replace(",", ".");
-      const comissao = Number(comissaoTexto);
-      if (!(comissao >= 0 && comissao <= 100)) {
-        return erroNa(alvo, "A comissão padrão precisa estar entre 0 e 100.");
+        // Campo vazio grava o padrão do catálogo, para o sistema sempre ter um valor
+        if (valor === "" && p.padrao != null) valor = p.padrao;
+        linhasSalvar.push({ chave: p.chave, valor, atualizado_em: agora });
       }
 
       const botao = form.querySelector("button[type=submit]");
       botao.disabled = true;
-      const campos = [
-        "nome_loja", "endereco_retirada", "horario_retirada", "minutos_expiracao_pedido",
-        "url_publica_app", "mp_public_key", "entrega_local_ativa", "entrega_local_ceps", "melhor_envio_sandbox",
-        "fiscal_ativo", "fiscal_ambiente", "fiscal_cnpj", "fiscal_razao_social", "fiscal_ie", "fiscal_regime",
-        "fiscal_logradouro", "fiscal_numero", "fiscal_bairro", "fiscal_municipio", "fiscal_uf", "fiscal_cep",
-        "fiscal_natureza_operacao", "fiscal_cfop", "fiscal_csosn", "fiscal_cst_icms", "fiscal_icms_aliquota",
-        "fiscal_origem", "fiscal_cst_pis", "fiscal_cst_cofins",
-        "rastreio_provedor", "devolvido_acao",
-      ];
-      const linhasSalvar = campos.map((chave) => ({ chave, valor: String(f.get(chave) || "").trim(), atualizado_em: new Date().toISOString() }));
-      linhasSalvar.push({ chave: "cep_origem", valor: cepOrigem, atualizado_em: new Date().toISOString() });
-      linhasSalvar.push({ chave: "comissao_padrao_percentual", valor: String(comissao), atualizado_em: new Date().toISOString() });
-      linhasSalvar.push({ chave: "taxa_entrega_local_centavos", valor: String(taxaCentavos), atualizado_em: new Date().toISOString() });
-
+      // O banco valida cada valor (limite, opção e formato) e devolve a mensagem de erro
       const { error: falha } = await sb().from("loja_configuracoes").upsert(linhasSalvar, { onConflict: "chave" });
       if (falha) {
         botao.disabled = false;
