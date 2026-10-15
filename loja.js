@@ -2923,7 +2923,7 @@ window.Loja = (() => {
     recebida: "Produto recebido: reembolso pendente",
     reembolsada: "Reembolsado",
   };
-  const TIPO_DEVOLUCAO = { arrependimento: "Arrependimento", defeito: "Defeito", troca: "Troca" };
+  const TIPO_DEVOLUCAO = { arrependimento: "Arrependimento", defeito: "Defeito", troca: "Troca", retorno_remetente: "Devolvido ao remetente pela transportadora" };
 
   async function devolucoesAdmin(alvo) {
     carregando(alvo);
