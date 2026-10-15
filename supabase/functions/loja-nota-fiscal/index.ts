@@ -1,6 +1,7 @@
-// Emite, consulta e cancela a nota fiscal de um pedido pelo Focus NFe.
+// Emite, consulta e cancela a nota fiscal de um grupo do pedido pelo Focus NFe.
+// Grupo: a cooperativa (vendedor_id ausente) ou um vendedor. A nota de cada vendedor sai pela conta de emissão dele.
 // Chamada pelo app com o login do administrador. O banco confere o administrador, os dados fiscais e o pedido.
-// O token do Focus NFe fica no Supabase Vault (configurado pelo administrador no app).
+// Os tokens do Focus NFe ficam no Supabase Vault (focus_nfe_token da cooperativa; nf_vendedor_<id>_token de cada vendedor).
 // A referência da nota é nova a cada tentativa (ver preparar_nota_loja), então nada é enviado duas vezes.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -152,15 +153,15 @@ Deno.serve(async (req) => {
   const pedidoId = String(corpo?.pedido_id ?? "");
   const acao = String(corpo?.acao ?? "");
   const justificativa = String(corpo?.justificativa ?? "").trim();
+  const vendedorId = corpo?.vendedor_id ? String(corpo.vendedor_id) : null;
   if (!UUID.test(pedidoId)) return json(400, { erro: "Pedido inválido." });
+  if (vendedorId !== null && !UUID.test(vendedorId)) return json(400, { erro: "Vendedor inválido." });
   if (!["emitir", "consultar", "cancelar"].includes(acao)) return json(400, { erro: "Ação inválida." });
-
-  const { data: token } = await admin.rpc("ler_segredo_loja", { p_nome: "focus_nfe_token" });
-  if (!token) return json(503, { erro: "O token do Focus NFe ainda não foi configurado em Pagamento e configurações." });
 
   const registrar = async (estado: Estado) => {
     await admin.rpc("confirmar_nota_loja", {
       p_pedido: pedidoId,
+      p_vendedor: vendedorId,
       p_status: estado.status,
       p_numero: estado.numero ?? null,
       p_chave: estado.chave ?? null,
@@ -169,11 +170,23 @@ Deno.serve(async (req) => {
     });
   };
 
-  const cabecalhoAuth = { Authorization: `Basic ${btoa(`${token}:`)}`, "Content-Type": "application/json", Accept: "application/json" };
+  // Token do grupo: o da cooperativa ou o do vendedor, conforme a conta de emissão dele
+  const cabecalhoPara = async (tokenNome: string) => {
+    const { data: token } = await admin.rpc("ler_segredo_loja", { p_nome: tokenNome });
+    if (!token) {
+      return null;
+    }
+    return { Authorization: `Basic ${btoa(`${token}:`)}`, "Content-Type": "application/json", Accept: "application/json" };
+  };
+  const semToken = (tokenNome: string) => json(503, {
+    erro: tokenNome === "focus_nfe_token"
+      ? "O token do Focus NFe ainda não foi configurado em Pagamento e configurações."
+      : "A conta de emissão deste vendedor não está conectada.",
+  });
 
   // Consulta a nota pela referência, nos dois ambientes conforme configurado.
   // deno-lint-ignore no-explicit-any
-  const consultar = async (base: string, ref: string): Promise<{ estado: Estado; corpo: any; ok: boolean }> => {
+  const consultar = async (base: string, ref: string, cabecalhoAuth: Record<string, string>): Promise<{ estado: Estado; corpo: any; ok: boolean }> => {
     const resposta = await fetch(`${base}/v2/nfe/${encodeURIComponent(ref)}`, { headers: cabecalhoAuth });
     const dados = await resposta.json().catch(() => ({}));
     if (resposta.status === 404) return { estado: { status: "processando" }, corpo: dados, ok: true };
@@ -183,9 +196,14 @@ Deno.serve(async (req) => {
   try {
     if (acao === "emitir") {
       // Passo 1: o banco confere administrador, dados fiscais, NCM e situação do pedido.
-      const { data: dados, error: erroPreparo } = await cooperado.rpc("preparar_nota_loja", { p_pedido: pedidoId });
+      const { data: dados, error: erroPreparo } = await cooperado.rpc("preparar_nota_loja", {
+        p_pedido: pedidoId,
+        p_vendedor: vendedorId,
+      });
       if (erroPreparo) return json(409, { erro: erroPreparo.message });
 
+      const cabecalhoAuth = await cabecalhoPara(dados.token_nome);
+      if (!cabecalhoAuth) return semToken(dados.token_nome);
       const base = BASES[dados.ambiente] ?? BASES.homologacao;
 
       // Passo 2: envia a nota.
@@ -204,18 +222,23 @@ Deno.serve(async (req) => {
 
       // Passo 3: a SEFAZ responde em alguns segundos. Consulta uma vez; se ainda estiver processando, o admin atualiza.
       await new Promise((r) => setTimeout(r, 3000));
-      const { estado } = await consultar(base, dados.ref);
+      const { estado } = await consultar(base, dados.ref, cabecalhoAuth);
       await registrar(estado);
       return json(200, { situacao: estado.status, numero: estado.numero ?? null });
     }
 
-    // Consultar e cancelar usam a referência já guardada no pedido.
-    const { data: ref, error: erroRef } = await cooperado.rpc("referencia_nota_loja", { p_pedido: pedidoId });
+    // Consultar e cancelar usam a referência já guardada na nota do grupo.
+    const { data: ref, error: erroRef } = await cooperado.rpc("referencia_nota_loja", {
+      p_pedido: pedidoId,
+      p_vendedor: vendedorId,
+    });
     if (erroRef) return json(409, { erro: erroRef.message });
+    const cabecalhoAuth = await cabecalhoPara(ref.token_nome);
+    if (!cabecalhoAuth) return semToken(ref.token_nome);
     const base = BASES[ref.ambiente] ?? BASES.homologacao;
 
     if (acao === "consultar") {
-      const { estado } = await consultar(base, ref.ref);
+      const { estado } = await consultar(base, ref.ref, cabecalhoAuth);
       await registrar(estado);
       return json(200, { situacao: estado.status, numero: estado.numero ?? null });
     }
